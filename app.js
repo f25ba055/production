@@ -401,6 +401,27 @@
       '完成日が昨日より前（' + input.value + '）になっています。日付に間違いがないか確認してください。' : '';
   }
 
+  // 工程を更新した人（P-032）。一時作業者も含めて製造部の台帳にだけ残し、営業部へ渡すCSVには含めない。
+  // 同じ端末で続けて登録しやすいよう、前回の登録者を入れておく。
+  let lastRegistrant = '';
+
+  function registrantField() {
+    const label = element('label');
+    label.className = 'registrant';
+    const input = element('input');
+    input.name = 'registeredBy';
+    input.required = true;
+    input.maxLength = 30;
+    input.autocomplete = 'off';
+    input.setAttribute('list', 'registrant-names');
+    input.value = lastRegistrant;
+    const names = new Set([...events.filter(event => event.registeredBy).map(event => event.registeredBy),
+      ...[...state.orders.values()].map(order => order.assignee).filter(Boolean)]);
+    $('registrant-names').replaceChildren(...[...names].map(name => option(name, '')));
+    label.append(element('span', '登録者（製造部内の記録） *'), input);
+    return label;
+  }
+
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
     const definition = workflow.interfaces[type];
@@ -459,6 +480,7 @@
       autoShortage();
     }
     if (type === 'reply') updateReasonCode();
+    if (type === 'progress') formFields.append(registrantField());
     if (type === 'reply') {
       const detail = element('div');
       detail.id = 'request-detail';
@@ -650,7 +672,8 @@
       time.dateTime = step.updatedAt;
       item.append(time, ' ', element('strong', step.stage),
         previous && previous !== step.stage ? '（' + previous + 'から）' : '',
-        step.expectedDate ? ' 完了見込み ' + step.expectedDate : '');
+        step.expectedDate ? ' 完了見込み ' + step.expectedDate : '',
+        step.registeredBy ? ' 登録：' + step.registeredBy : '');
       list.append(item);
       previous = step.stage;
     }
@@ -982,6 +1005,7 @@
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd',
           (quantityFields.includes(field) ? formatCount(event[field]) : event[field]) || '—'));
       }
+      if (event.registeredBy) metadata.append(element('dt', '登録者（部内）'), element('dd', event.registeredBy));
       detail.append(metadata);
       const detailCell = element('td');
       detailCell.append(detail);
@@ -1058,6 +1082,11 @@
     for (const field of workflow.interfaces[type].fields) {
       if (!automaticField(type, field) && data[field] === undefined) data[field] = '';
     }
+    if (type === 'progress' && !(data.registeredBy || '').trim()) {
+      show('登録者を入力してください。', true);
+      $('fields').querySelector('[name="registeredBy"]').focus();
+      return;
+    }
     if (type === 'reply' && data.decision === '却下' && !data.reasonCode) {
       show('却下理由の分類を選んでください。', true);
       $('fields').querySelector('[name="reasonCode"]').focus();
@@ -1080,6 +1109,10 @@
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
     if (type === 'progress') item.updatedAt = new Date().toISOString();
+    if (type === 'progress') {
+      item.registeredBy = (data.registeredBy || '').trim();
+      lastRegistrant = item.registeredBy;
+    }
     if (type === 'receipt') item.receivedAt = new Date().toISOString();
     // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
     item.createdAt = localDate();
