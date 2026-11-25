@@ -259,6 +259,19 @@
     label.append(button);
   }
 
+  // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
+  function isOldCompletedDate(value) {
+    return Boolean(value) && value < daysBefore(localDate(), 1);
+  }
+
+  function updateCompletedDateWarning() {
+    const warning = $('completed-date-warning');
+    const input = $('fields').querySelector('[name="completedDate"]');
+    if (!warning || !input) return;
+    warning.textContent = isOldCompletedDate(input.value) ?
+      '完成日が昨日より前（' + input.value + '）になっています。日付に間違いがないか確認してください。' : '';
+  }
+
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
     const definition = workflow.interfaces[type];
@@ -288,6 +301,14 @@
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
       if (field === 'instruction') widenable(label, input);
+      if (field === 'completedDate') {
+        const warning = element('span');
+        warning.id = 'completed-date-warning';
+        warning.className = 'field-warning';
+        warning.setAttribute('role', 'status');
+        label.append(warning);
+        input.addEventListener('input', updateCompletedDateWarning);
+      }
       formFields.append(label);
     }
     if (type === 'reply') {
@@ -729,6 +750,13 @@
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
+    if (type === 'finish' && isOldCompletedDate(data.completedDate) &&
+      !confirm('完成日が ' + data.completedDate + ' になっています（昨日より前の日付です）。\n' +
+        'このまま製造完了報告を送りますか？')) {
+      show('製造完了報告の送信を取りやめました。完成日を確認してください。');
+      $('fields').querySelector('[name="completedDate"]').focus();
+      return;
+    }
     const item = { eventId: identifier('EV'), type, ...data };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
