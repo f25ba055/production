@@ -145,7 +145,7 @@
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         channel: event.channel || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: ''
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: ''
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -235,6 +235,7 @@
         state.proofs.set(event.proofId, { ...event, answer: '' });
         order.proofStatus = '回答待ち（第' + event.version + '版）';
         order.proofVersion = Number(event.version);
+        order.proofComment = '';
         // 返答待ち日数の起点。createdAt は製造部の台帳にだけ残す記録（CSVには含めない）。
         order.proofSentAt = event.createdAt || '';
         order.proofDueDate = event.responseDueDate;
@@ -245,6 +246,8 @@
         proof.answer = event.proofDecision;
         proof.comment = event.comment;
         order.proofStatus = event.proofDecision + '（第' + proof.version + '版）';
+        // 修正依頼の理由（複数行のこともある, P-039）。次の版を送るまで一覧に出す。
+        order.proofComment = event.proofDecision === '修正依頼' ? event.comment : '';
         break;
       case 'progress':
         if (!order.progressAt || Date.parse(event.updatedAt) >= Date.parse(order.progressAt)) {

@@ -534,6 +534,15 @@
       autoShortage();
     }
     if (type === 'reply') updateReasonCode();
+    if (type === 'proof' && order) {
+      // 次の版を作るときに、前の版への修正理由を改行のまま見られるようにする（P-039）。
+      const last = [...state.proofs.values()].filter(proof => proof.orderId === order.id).at(-1);
+      if (last && last.answer === '修正依頼' && last.comment) {
+        const block = proofCommentBlock(last.comment, '前回（第' + last.version + '版）の修正理由');
+        block.classList.add('wide-block');
+        formFields.prepend(block);
+      }
+    }
     if (type === 'progress') formFields.append(registrantField());
     if (type === 'reply') {
       const detail = element('div');
@@ -663,6 +672,16 @@
     const due = order.proofDueDate ? '（期限 ' + order.proofDueDate +
       (order.proofDueDate < today ? '・' + daysBetween(order.proofDueDate, today) + '日超過' : '') + '）' : '';
     return state + days + due;
+  }
+
+  // 校正の修正理由は複数行で返ってくるので、見落とさないよう改行のまま表示する（P-039）。
+  function proofCommentBlock(comment, heading = '修正理由') {
+    const block = element('div');
+    block.className = 'proof-comment';
+    const text = element('div', comment.replace(/\r\n?/g, '\n'));
+    text.className = 'multiline';
+    block.append(element('strong', heading), text);
+    return block;
   }
 
   // 特急 → 今日納期 → 未着手 の順に上へ並べる。
@@ -816,6 +835,7 @@
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       paperCell(cells[2], order);
       deliveryCell(cells[4], order);
+      if (order.proofComment) cells[6].append(proofCommentBlock(order.proofComment));
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
