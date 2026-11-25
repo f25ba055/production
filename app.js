@@ -1075,7 +1075,13 @@
     list.replaceChildren();
     // 取り込み日（importedAt）は台帳にだけ残す記録。相手部署へ書き出すCSVには含めない。
     const since = $('history-filter').elements.since.value;
-    const shown = [...events].reverse().filter(event => !since || (event.importedAt && event.importedAt >= since));
+    // 自分が送った通知と、営業部から受け取った依頼を分けて見られるようにする（P-040）。
+    const direction = $('history-filter').elements.direction.value;
+    const directionOf = event => workflow.interfaces[event.type].internal ? 'internal' :
+      workflow.interfaces[event.type].from === department ? 'sent' : 'received';
+    const shown = [...events].reverse()
+      .filter(event => !direction || directionOf(event) === direction)
+      .filter(event => !since || (event.importedAt && event.importedAt >= since));
     for (const event of shown) {
       const definition = workflow.interfaces[event.type];
       const sent = definition.from === department;
@@ -1106,7 +1112,7 @@
       list.append(row);
     }
     if (!list.children.length) {
-      rowMessage(list, 6, events.length ? since + ' 以降に取り込んだやり取りはありません。' : 'やり取りはまだありません。');
+      rowMessage(list, 6, events.length ? '条件に合うやり取りはありません。' : 'やり取りはまだありません。');
     }
     $('history-count').textContent = shown.length === events.length ?
       events.length + '件' : shown.length + '件 ／ 全' + events.length + '件';

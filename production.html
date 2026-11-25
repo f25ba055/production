@@ -153,7 +153,15 @@
     <section class="no-print" aria-labelledby="history-title">
       <h2 id="history-title">やり取り履歴 <span id="history-count" class="count"></span></h2>
       <fieldset id="history-filter" class="filter">
-        <legend>CSVの取り込み日で絞り込む</legend>
+        <legend>やり取りの向き・CSVの取り込み日で絞り込む</legend>
+        <label class="inline-select">向き
+          <select name="direction">
+            <option value="">すべて</option>
+            <option value="sent">送信した通知（製造部→営業部）</option>
+            <option value="received">受信した依頼（営業部→製造部）</option>
+            <option value="internal">製造部内の記録</option>
+          </select>
+        </label>
         <label class="inline-select">取り込み日
           <input type="date" name="since">
         </label>
