@@ -9,6 +9,8 @@
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason' },
+    // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
+    receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
@@ -89,6 +91,10 @@
     if (event.type === 'paperMemo') {
       requireThat(paperStatuses.includes(event.paperStatus), '用紙の状況は「仮手配」か「入庫」で入力してください。');
     }
+    if (event.type === 'receipt') {
+      requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.receivedAt) &&
+        !isNaN(Date.parse(event.receivedAt)), '受信日時が不正です。');
+    }
     if (event.type === 'progress') {
       requireThat(stages.includes(event.stage), '工程が不正です。');
       requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.updatedAt) &&
@@ -124,6 +130,13 @@
         requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
       }
       state.requests.set(event.requestId, { ...event, answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
+      return;
+    }
+
+    if (event.type === 'receipt') {
+      requireThat(request && request.orderId === order.id, '該当する依頼がありません。');
+      requireThat(!request.receivedAt, 'この依頼の受信通知はすでに出しています。');
+      request.receivedAt = event.receivedAt;
       return;
     }
 

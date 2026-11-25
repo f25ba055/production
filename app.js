@@ -15,6 +15,7 @@
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
+    receivedAt: ['受信日時'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
@@ -82,9 +83,9 @@
 
   function orderChoices(type) {
     const orders = [...state.orders.values()];
-    if (type === 'reply') {
+    if (type === 'reply' || type === 'receipt') {
       return orders.filter(order => [...state.requests.values()].some(request =>
-        request.orderId === order.id && !request.answer));
+        request.orderId === order.id && !request.answer && (type === 'reply' || !request.receivedAt)));
     }
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
     if (type === 'paperMemo') return orders.filter(isListed);
@@ -95,7 +96,8 @@
   function requestChoices(type, order) {
     return [...state.requests.values()]
       .filter(request => order && request.orderId === order.id)
-      .filter(request => type === 'reply' ? !request.answer :
+      .filter(request => type === 'receipt' ? !request.answer && !request.receivedAt :
+        type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
         (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') +
@@ -172,7 +174,7 @@
   }
 
   function automaticField(type, field) {
-    return field === 'updatedAt' || (type === 'order' && field === 'orderId') ||
+    return field === 'updatedAt' || field === 'receivedAt' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
       (type === 'proof' && field === 'proofId');
   }
@@ -207,6 +209,7 @@
   // 今どの操作をしているか分かるよう、登録ボタンの名前を操作の種類に合わせる。
   const actionLabels = {
     reply: '依頼回答を送る',
+    receipt: '受信通知を送る',
     proof: '校正確認を送る',
     progress: '製造進捗を通知する',
     delay: '納期遅延を通知する',
@@ -265,6 +268,8 @@
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       definition.internal ? '製造部だけのメモです。台帳には残りますが、営業部へ渡すCSVは書き出しません。' :
+      type === 'receipt' ? '読み込んだ依頼を選ぶと、正式な回答の前に「受信済み」を営業部へ知らせるCSVを書き出します。' +
+        '「未回答の依頼」欄からまとめて書き出すこともできます。' :
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     const button = $('save-event');
@@ -563,11 +568,50 @@
       button.addEventListener('click', () => startReply(request));
       const actionCell = element('td');
       actionCell.append(button);
-      row.append(typeCell, orderCell, element('td', requestSummary(request)), element('td', request.requestId), actionCell);
+      const receiptCell = element('td');
+      if (request.receivedAt) {
+        receiptCell.textContent = '通知済み ' + formatDateTime(request.receivedAt);
+      } else {
+        const notify = element('button', '受信を通知');
+        notify.type = 'button';
+        notify.className = 'secondary';
+        notify.addEventListener('click', () => sendReceipts([request]));
+        receiptCell.append(notify);
+      }
+      row.append(typeCell, orderCell, element('td', requestSummary(request)), element('td', request.requestId),
+        receiptCell, actionCell);
       list.append(row);
     }
-    if (!list.children.length) rowMessage(list, 5, '未回答の依頼はありません。');
+    if (!list.children.length) rowMessage(list, 6, '未回答の依頼はありません。');
     $('pending-count').textContent = pending.length + '件';
+    const unnotified = pending.filter(request => !request.receivedAt).length;
+    $('notify-all').disabled = !unnotified;
+    $('notify-all').textContent = unnotified ? '未通知の ' + unnotified + ' 件をまとめて受信通知' : '受信通知はすべて送信済み';
+  }
+
+  function formatDateTime(iso) {
+    const date = new Date(iso);
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' +
+      String(date.getDate()).padStart(2, '0') + ' ' + String(date.getHours()).padStart(2, '0') + ':' +
+      String(date.getMinutes()).padStart(2, '0');
+  }
+
+  // 正式な回答の前に「受信済み」を営業部へ知らせる。複数件はまとめて1つのCSVに書き出す。
+  function sendReceipts(requests) {
+    const receivedAt = new Date().toISOString();
+    const items = requests.map(request => ({ eventId: identifier('EV'), type: 'receipt',
+      requestId: request.requestId, orderId: request.orderId, receivedAt }));
+    try {
+      events = workflow.mergeEvents(events, items).events;
+      const draft = captureInput();
+      refresh();
+      restoreInput(draft);
+      download('receipt-' + (items.length === 1 ? items[0].orderId + '-' + items[0].eventId : localDate() + '-' + items.length + '件') + '.csv',
+        workflow.exportExchange('receipt', items));
+      show('受信通知を ' + items.length + ' 件書き出しました。営業部へ渡してください。');
+    } catch (error) {
+      show(error.message, true);
+    }
   }
 
   // 日付（YYYY-MM-DD）から days 日前の日付を返す。
@@ -630,6 +674,8 @@
   }
 
   $('cancel-search').addEventListener('input', renderCancelled);
+  $('notify-all').addEventListener('click', () =>
+    sendReceipts([...state.requests.values()].filter(request => !request.answer && !request.receivedAt)));
   $('history-filter').addEventListener('change', renderHistory);
   $('history-filter').addEventListener('click', event => {
     const button = event.target.closest('button[data-since]');
@@ -657,6 +703,7 @@
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
     if (type === 'progress') item.updatedAt = new Date().toISOString();
+    if (type === 'receipt') item.receivedAt = new Date().toISOString();
 
     try {
       events = workflow.mergeEvents(events, [item]).events;
@@ -689,7 +736,9 @@
       refresh();
       showImportedOrders(file.name, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
       const notice = restoreInput(draft);
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice);
+      const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice +
+        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
     } finally {
