@@ -152,6 +152,18 @@
     return input;
   }
 
+  // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
+  // 完了報告では部数の入力途中で取り違えに気づくことがあるので、消える前に確認する。
+  let formSnapshot = '';
+
+  function enteredValues() {
+    return JSON.stringify([...new FormData($('entry'))].filter(([name]) => name !== 'orderId'));
+  }
+
+  function hasUnsavedFinish(type) {
+    return type === 'finish' && enteredValues() !== formSnapshot;
+  }
+
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
     const definition = workflow.interfaces[type];
@@ -168,7 +180,15 @@
         !(field === 'reason' && type === 'reply');
       if (field === 'orderId' && selectedOrder) input.value = selectedOrder;
       if (field === 'orderId') input.addEventListener('change', () => {
+        const unsaved = hasUnsavedFinish(type);
+        if (unsaved && !confirm('入力中の製造完了報告（完成日・良品部数・不足部数など）は、注文を切り替えると消えます。\n' +
+          '注文を切り替えますか？')) {
+          input.value = selectedOrder;
+          show('注文の切り替えを取り消しました。入力内容はそのまま残っています。');
+          return;
+        }
         renderForm(input.value);
+        if (unsaved) show('注文を切り替えました。製造完了報告の内容を入力し直してください。');
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
@@ -178,6 +198,7 @@
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+    formSnapshot = enteredValues();
   }
 
   function captureInput() {
