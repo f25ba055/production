@@ -109,7 +109,27 @@
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
         (type === 'finish' ? copies(request.targetQuantity) + ' · ' + deliveryProgress(request) : '') +
         (type === 'reply' && request.dueDate ? '希望納期 ' + request.dueDate + ' · ' : '') +
-        (type === 'reply' && request.quantity ? copies(request.quantity) + ' · ' : '') + request.requestId]);
+        (type === 'reply' && request.quantity ? copies(request.quantity) + ' · ' : '') + request.requestId +
+        (type === 'reply' ? changeOrderLabel(request) : '')]);
+  }
+
+  // 同じ注文に注文変更依頼が複数あるとき（P-035）。届いた順（台帳の登録順）で新旧を判断する。
+  // 後から届いた変更依頼が未回答か承認済みなら、それより前の変更依頼は「古い依頼」で、承認すると最新の変更を戻してしまう。
+  function changeRequests(orderId) {
+    return [...state.requests.values()].filter(request => request.type === 'change' && request.orderId === orderId);
+  }
+
+  function newerChange(request) {
+    if (request.type !== 'change') return null;
+    const list = changeRequests(request.orderId);
+    return list.slice(list.indexOf(request) + 1).filter(item => !item.answer || item.answer === '承認').at(-1) || null;
+  }
+
+  function changeOrderLabel(request) {
+    if (request.type !== 'change') return '';
+    const open = changeRequests(request.orderId).filter(item => !item.answer);
+    if (open.length < 2 && !newerChange(request)) return '';
+    return newerChange(request) ? '（古い依頼：後から ' + newerChange(request).requestId + ' あり）' : '（最新の変更依頼）';
   }
 
   // 分納（P-026）の進み具合。分納でない依頼は空文字。
@@ -172,6 +192,13 @@
     if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
     holder.append(element('h3', '回答する依頼の内容'));
+    const newer = newerChange(request);
+    if (newer) {
+      const warning = element('p', 'この注文変更依頼は古い依頼です。後から届いた ' + newer.requestId + '（' +
+        (newer.answer ? '承認済み' : '未回答') + '）があるため承認できません。却下してください。');
+      warning.className = 'field-warning old-request';
+      holder.append(warning);
+    }
     const list = element('dl');
     for (const [label, value] of rows) list.append(element('dt', label), element('dd', value));
     holder.append(list);
@@ -955,6 +982,14 @@
         typeCell.prepend(tag);
         row.classList.add('rush');
       }
+      // 同じ注文の注文変更依頼が複数あるときは新旧を示す（P-035）。
+      const label = changeOrderLabel(request);
+      if (label) {
+        const tag = element('span', newerChange(request) ? '古い依頼' : '最新');
+        tag.className = newerChange(request) ? 'tag tag-due' : 'tag tag-new';
+        tag.title = label.replace(/[（）]/g, '');
+        typeCell.append(' ', tag);
+      }
       const orderCell = element('td');
       productCell(orderCell, order, false);
       const button = element('button', '回答する');
@@ -1113,6 +1148,15 @@
       show('登録者を入力してください。', true);
       $('fields').querySelector('[name="registeredBy"]').focus();
       return;
+    }
+    if (type === 'reply' && data.decision === '承認') {
+      const target = state.requests.get(data.requestId);
+      const newer = target && newerChange(target);
+      if (newer) {
+        show('この注文変更依頼（' + target.requestId + '）より後に届いた ' + newer.requestId +
+          ' があります。古い依頼を承認すると最新の変更が戻ってしまうため承認できません。却下してください。', true);
+        return;
+      }
     }
     if (type === 'reply' && data.decision === '却下' && !data.reasonCode) {
       show('却下理由の分類を選んでください。', true);
