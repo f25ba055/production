@@ -290,11 +290,14 @@
     const wantDue = filter.elements.dueToday.checked;
     const wantNew = filter.elements.notStarted.checked;
     const wantRush = filter.elements.rush.checked;
+    // バーコードを使わずに探せるよう、注文IDの一部（末尾数文字など）で部分一致させる。
+    const idQuery = filter.elements.idSearch.value.trim().toLowerCase();
     const all = [...state.orders.values()].filter(isListed).reverse();
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
+      .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
       .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
@@ -429,6 +432,7 @@
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
   $('order-filter').addEventListener('change', renderOrders);
+  $('order-filter').addEventListener('input', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
 
   $('entry').addEventListener('submit', event => {

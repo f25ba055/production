@@ -61,7 +61,10 @@
         <label class="check"><input type="checkbox" name="dueToday"> 今日納期 <span id="due-today-count" class="count"></span></label>
         <label class="check"><input type="checkbox" name="notStarted"> 未着手 <span id="not-started-count" class="count"></span></label>
         <label class="check"><input type="checkbox" name="rush"> 特急だけ <span id="rush-count" class="count"></span></label>
-        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを表示します。すべて外すと全件を表示します。特急・今日納期・未着手の注文は常に一覧の上に並びます。</p>
+        <label class="id-search">注文IDで探す
+          <input type="search" name="idSearch" placeholder="末尾の数文字でも可（例: 4a2f）" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを表示します。「注文IDで探す」は入力した文字を含む注文だけに絞ります（大文字・小文字は区別しません）。すべて外すと全件を表示します。特急・今日納期・未着手の注文は常に一覧の上に並びます。</p>
       </fieldset>
       <div class="table-wrap">
         <table aria-labelledby="orders-title">
