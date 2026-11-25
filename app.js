@@ -19,6 +19,7 @@
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
     deliveryNo: ['分納の回'], deliveryDate: ['納品日', 'date'],
+    spareQuantity: ['予備部数（良品とは別に渡す分）', 'number'],
     receivedAt: ['受信日時'],
     assignee: ['担当者'], handoverNote: ['申し送り'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
@@ -350,7 +351,7 @@
     input.name = field;
     if (input.tagName === 'INPUT') input.type = kind || 'text';
     if (input.type === 'number') {
-      input.min = ['goodQuantity', 'shortageQuantity'].includes(field) ? '0' : '1';
+      input.min = ['goodQuantity', 'shortageQuantity', 'spareQuantity', 'printedQuantity', 'extraCost'].includes(field) ? '0' : '1';
       input.step = '1';
     }
     if (field === 'completedDate' || field === 'memoDate') input.value = localDate();
@@ -599,7 +600,8 @@
       const label = element('label');
       const input = inputFor(type, field, order);
       // 却下理由の分類は却下のときだけ必須なので、送信時に確かめる（承認のときは隠れて空のまま）。
-      input.required = !['comment', 'confirmedDueDate', 'note', 'reasonCode', 'printedQuantity', 'extraCost'].includes(field) &&
+      input.required = !['comment', 'confirmedDueDate', 'note', 'reasonCode', 'printedQuantity', 'extraCost',
+        'spareQuantity'].includes(field) &&
         !(field === 'reason' && type === 'reply');
       if (field === 'orderId' && selectedOrder) input.value = selectedOrder;
       if (field === 'orderId') input.addEventListener('change', () => {
@@ -660,6 +662,7 @@
       set('completedDate', correctionTarget.completedDate);
       set('goodQuantity', correctionTarget.goodQuantity);
       set('shortageQuantity', correctionTarget.shortageQuantity);
+      set('spareQuantity', correctionTarget.spareQuantity || '');
     }
     if (type === 'proof') {
       updateProofFileName(order);
@@ -918,7 +921,8 @@
       item.append(element('time', finish.completedDate), ' ',
         element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '') +
           (finish.correctsEventId ? '（訂正版）' : '')),
-        ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
+        ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : '') +
+        (Number(finish.spareQuantity) ? '・予備 ' + copies(finish.spareQuantity) : ''));
       list.append(item);
     }
     holder.append(list);
@@ -1058,7 +1062,8 @@
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
         statusOf(order), proofText(order, today), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
         order.expectedDate || '—',
-        order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
+        order.delayReason || '—', order.initialFinished || order.goodQuantity ?
+          copies(order.goodQuantity) + (order.spareQuantity ? '＋予備 ' + copies(order.spareQuantity) : '') : '—'];
       const cells = values.map(value => element('td', value));
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       paperCell(cells[2], order);
