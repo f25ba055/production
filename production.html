@@ -32,6 +32,7 @@
           <p id="action-help" class="hint"></p>
           <div id="fields"></div>
           <button id="save-event" type="submit">登録してCSVを書き出す</button>
+          <p class="hint">ボタンを押すと台帳に登録し、営業部へ渡すCSVを書き出します（用紙メモはCSVを書き出しません）。</p>
         </form>
       </section>
       <div class="io-section">
@@ -53,14 +54,58 @@
 
     <p id="message" role="status" aria-live="polite">CSVの処理結果をここに表示します。</p>
 
-    <section aria-labelledby="orders-title">
-      <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+    <section id="import-result" class="no-print" aria-labelledby="import-result-title" hidden>
+      <div class="section-head">
+        <h2 id="import-result-title">今回の取り込みで新規だった注文 <span id="import-result-count" class="count"></span></h2>
+        <button id="close-import-result" type="button" class="secondary">閉じる</button>
+      </div>
+      <p id="import-result-note" class="hint"></p>
+      <div class="table-wrap">
+        <table aria-labelledby="import-result-title">
+          <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">希望納期</th><th scope="col">特急区分</th></tr></thead>
+          <tbody id="import-result-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pending-section" class="no-print" aria-labelledby="pending-title">
+      <h2 id="pending-title">未回答の依頼 <span id="pending-count" class="count"></span></h2>
+      <p class="hint">営業部から届き、まだ「依頼回答」を出していない依頼だけを届いた順に並べます。「回答する」を押すと、上の入力欄に依頼回答の準備をします。</p>
+      <div class="table-wrap">
+        <table aria-labelledby="pending-title">
+          <thead><tr><th scope="col">種類</th><th scope="col">注文</th><th scope="col">依頼の内容</th><th scope="col">依頼ID</th><th scope="col">回答</th></tr></thead>
+          <tbody id="pending"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="orders-section" aria-labelledby="orders-title">
+      <div class="section-head">
+        <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+        <button id="print-orders" type="button" class="secondary no-print">一覧を印刷</button>
+      </div>
+      <p id="print-info" class="print-only"></p>
+      <div id="stage-counts" class="stage-counts" aria-label="工程ごとの件数"></div>
       <fieldset id="order-filter" class="filter">
-        <legend>先に拾う注文で絞り込む</legend>
+        <legend>先に拾う注文で絞り込む・並べ替える</legend>
         <label class="check"><input type="checkbox" name="dueToday"> 今日納期 <span id="due-today-count" class="count"></span></label>
         <label class="check"><input type="checkbox" name="notStarted"> 未着手 <span id="not-started-count" class="count"></span></label>
         <label class="check"><input type="checkbox" name="rush"> 特急だけ <span id="rush-count" class="count"></span></label>
-        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを表示します。すべて外すと全件を表示します。特急・今日納期・未着手の注文は常に一覧の上に並びます。</p>
+        <label class="check"><input type="checkbox" name="proofWaiting"> 校正待ちだけ <span id="proof-waiting-count" class="count"></span></label>
+        <label class="check"><input type="checkbox" name="showDone"> 完了報告済みも表示 <span id="done-count" class="count"></span></label>
+        <label class="inline-select">用紙
+          <select name="paper"><option value="">すべて</option></select>
+        </label>
+        <label class="inline-select">並び順
+          <select name="sort">
+            <option value="">優先度順</option>
+            <option value="product">品名順</option>
+          </select>
+        </label>
+        <label class="id-search">注文IDで探す
+          <input type="search" name="idSearch" placeholder="末尾の数文字でも可（例: 4a2f）" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを、「校正待ちだけ」はお客様の校正回答を待っている注文だけを表示します。「用紙」は選んだ用紙の注文だけに、「注文IDで探す」は入力した文字を含む注文だけに絞ります（大文字・小文字は区別しません）。完了報告を出し終えた注文（未完了の追加製造がないもの）は通常は表示せず、「完了報告済みも表示」を選んだときだけ表示します。すべて外すと作業中の注文を全件表示します。並び順が「優先度順」のときは、特急・今日納期・未着手の注文が一覧の上に並びます。「品名順」では同じ品名の注文がまとまり、同じ品名の中では優先度順に並びます。</p>
       </fieldset>
       <div class="table-wrap">
         <table aria-labelledby="orders-title">
@@ -80,11 +125,22 @@
       </div>
     </details>
 
-    <section aria-labelledby="history-title">
-      <h2 id="history-title">やり取り履歴</h2>
+    <section class="no-print" aria-labelledby="history-title">
+      <h2 id="history-title">やり取り履歴 <span id="history-count" class="count"></span></h2>
+      <fieldset id="history-filter" class="filter">
+        <legend>CSVの取り込み日で絞り込む</legend>
+        <label class="inline-select">取り込み日
+          <input type="date" name="since">
+        </label>
+        <span>以降に取り込んだもの</span>
+        <button type="button" class="secondary" data-since="0">今日</button>
+        <button type="button" class="secondary" data-since="1">昨日から</button>
+        <button type="button" class="secondary" data-since="">解除</button>
+        <p class="hint">日付を選ぶと、その日以降に「相手部署からのCSV」で取り込んだやり取りだけを表示します。この機能を入れる前に取り込んだやり取りには取り込み日が残っていないため、絞り込むと表示されません。</p>
+      </fieldset>
       <div class="table-wrap">
         <table aria-labelledby="history-title">
-          <thead><tr><th scope="col">方向</th><th scope="col">種類</th><th scope="col">注文ID</th><th scope="col">内容</th><th scope="col">再出力</th></tr></thead>
+          <thead><tr><th scope="col">方向</th><th scope="col">種類</th><th scope="col">注文ID</th><th scope="col">取り込み日</th><th scope="col">内容</th><th scope="col">再出力</th></tr></thead>
           <tbody id="history"></tbody>
         </table>
       </div>
