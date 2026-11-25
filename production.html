@@ -69,15 +69,19 @@
 
     <section id="import-result" class="no-print" aria-labelledby="import-result-title" hidden>
       <div class="section-head">
-        <h2 id="import-result-title">今回の取り込みで新規だった注文 <span id="import-result-count" class="count"></span></h2>
+        <h2 id="import-result-title">今回の取り込み結果 <span id="import-result-count" class="count"></span></h2>
         <button id="close-import-result" type="button" class="secondary">閉じる</button>
       </div>
       <p id="import-result-note" class="hint"></p>
-      <div class="table-wrap">
+      <div id="import-new-block" class="table-wrap">
         <table aria-labelledby="import-result-title">
           <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">希望納期</th><th scope="col">特急区分</th></tr></thead>
           <tbody id="import-result-list"></tbody>
         </table>
+      </div>
+      <div id="import-duplicates-block" class="duplicates" hidden>
+        <h3>受信済み（重複）で取り込まなかったもの <span id="import-duplicates-count" class="count"></span></h3>
+        <ul id="import-duplicates"></ul>
       </div>
     </section>
 

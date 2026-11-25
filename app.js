@@ -1626,16 +1626,22 @@
     if (!pendingImport) return;
     const { fileName, incoming } = pendingImport;
     try {
+      // 取り込み済み（重複）だった行（P-053）。どの依頼が重複していたかを結果に出す。
+      const knownEvents = new Set(events.map(event => event.eventId));
+      const duplicates = incoming.filter(item => knownEvents.has(item.eventId));
       const result = workflow.mergeEvents(events, incoming);
       const draft = captureInput();
       const knownOrders = new Set(state.orders.keys());
       events = result.events;
       closeImportPreview();
       refresh();
-      showImportedOrders(fileName, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
+      showImportedOrders(fileName, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped,
+        duplicates);
       const notice = restoreInput(draft);
       const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
-      show(fileName + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice +
+      show(fileName + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件' +
+        (duplicates.length ? '（' + duplicates.slice(0, 3).map(duplicateLabel).join('、') +
+          (duplicates.length > 3 ? ' ほか' : '') + '）' : '') + '。' + notice +
         (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
     } catch (error) {
       closeImportPreview();
@@ -1645,13 +1651,30 @@
 
   // 複数件の製造依頼CSVを取り込んだあと、どの注文が新規だったかを一覧で見せる。
   // 注文一覧でも「今回新規」の目印を付ける（次の取り込みか「閉じる」まで）。
-  function showImportedOrders(fileName, orders, skipped) {
+  // 重複していた行の見出し。依頼は依頼ID、校正は校正ID、それ以外は種類と注文IDで示す。
+  function duplicateLabel(item) {
+    return item.requestId || item.proofId || workflow.interfaces[item.type].name + ' ' + item.orderId;
+  }
+
+  function showImportedOrders(fileName, orders, skipped, duplicates = []) {
     const panel = $('import-result');
     const list = $('import-result-list');
     list.replaceChildren();
     importedOrderIds = new Set(orders.map(order => order.id));
-    panel.hidden = !orders.length;
+    panel.hidden = !orders.length && !duplicates.length;
+    // 受信済み（重複）だった依頼の一覧（P-053）。
+    const duplicateList = $('import-duplicates');
+    duplicateList.replaceChildren(...duplicates.map(item => {
+      const order = state.orders.get(item.orderId);
+      return element('li', workflow.interfaces[item.type].name + ' · ' + duplicateLabel(item) +
+        (order ? ' · ' + order.product + '（' + order.id + '）' : ''));
+    }));
+    $('import-duplicates-block').hidden = !duplicates.length;
+    $('import-duplicates-count').textContent = duplicates.length + '件';
+    $('import-new-block').hidden = !orders.length;
     if (!orders.length) {
+      $('import-result-count').textContent = '新規 0件';
+      $('import-result-note').textContent = fileName + ' には新しく登録された注文はありませんでした。';
       renderOrders();
       return;
     }
@@ -1662,7 +1685,7 @@
       if (order.rush) row.classList.add('rush');
       list.append(row);
     }
-    $('import-result-count').textContent = orders.length + '件';
+    $('import-result-count').textContent = '新規の注文 ' + orders.length + '件';
     $('import-result-note').textContent = fileName + ' で新しく登録された注文です。' +
       (skipped ? '取り込み済みだった ' + skipped + ' 件は含みません。' : '') +
       '注文一覧では「今回新規」の目印が付きます。';

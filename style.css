@@ -53,6 +53,9 @@ body { padding-bottom: 5rem; }
 .io-section { display: grid; gap: 1rem; }
 .io-section section { display: grid; gap: .5rem; }
 .io-section h2 { margin: 0; }
+.duplicates { margin-top: .6rem; padding: .4rem .7rem; border-left: 3px solid var(--line); background: #f6f8f7; }
+.duplicates h3 { margin: 0 0 .2rem; font-size: .95rem; }
+.duplicates ul { margin: 0; padding-left: 1.3rem; font-size: .9rem; }
 .pending-filter { margin: 0 0 .5rem; }
 .backup-status { margin: 0; font-size: .85rem; color: #486062; }
 .backup-status[data-unsaved="true"] { color: #8f2618; font-weight: 600; }
