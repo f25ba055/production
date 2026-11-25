@@ -467,6 +467,30 @@
     if (!rejecting) code.value = '';
   }
 
+  // 工程の飛ばし・逆戻りの確認（P-043）。準備中→印刷中→加工中→検品中の順で、次の工程以外に進めるときに知らせる。
+  // 進捗通知をまだ出していない注文は、準備中から始まるものとする。
+  function stageJumpWarning(order, stage) {
+    if (!order || !stage) return '';
+    const stages = workflow.stages;
+    const from = order.progress ? stages.indexOf(order.progress) : -1;
+    const to = stages.indexOf(stage);
+    if (to === from) return '';
+    if (to < from) return '工程が「' + order.progress + '」から「' + stage + '」に戻ります。';
+    if (to > from + 1) {
+      return '工程「' + stages.slice(from + 1, to).join('」「') + '」を飛ばして、' +
+        (order.progress ? '「' + order.progress + '」から' : '') + '「' + stage + '」にします。';
+    }
+    return '';
+  }
+
+  function updateStageWarning() {
+    const warning = $('stage-warning');
+    if (!warning) return;
+    const fields = $('fields');
+    warning.textContent = stageJumpWarning(state.orders.get(fields.querySelector('[name="orderId"]')?.value),
+      fields.querySelector('[name="stage"]')?.value);
+  }
+
   // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
   function isOldCompletedDate(value) {
     return Boolean(value) && value < daysBefore(localDate(), 1);
@@ -576,6 +600,15 @@
         note.className = 'field-note';
         note.setAttribute('role', 'status');
         label.append(note);
+      }
+      if (field === 'stage' && type === 'progress') {
+        const warning = element('span');
+        warning.id = 'stage-warning';
+        warning.className = 'field-warning';
+        warning.setAttribute('role', 'status');
+        label.append(warning);
+        input.addEventListener('change', updateStageWarning);
+        if (order && order.progress) label.append(Object.assign(element('span', '今の工程：' + order.progress), { className: 'field-note' }));
       }
       if (field === 'completedDate') {
         const warning = element('span');
@@ -1284,6 +1317,14 @@
       show('登録者を入力してください。', true);
       $('fields').querySelector('[name="registeredBy"]').focus();
       return;
+    }
+    if (type === 'progress') {
+      const warning = stageJumpWarning(state.orders.get(data.orderId), data.stage);
+      if (warning && !confirm(warning + '\nこのまま製造進捗通知を送りますか？')) {
+        show('製造進捗通知の送信を取りやめました。工程を確認してください。');
+        $('fields').querySelector('[name="stage"]').focus();
+        return;
+      }
     }
     if (type === 'reply' && data.decision === '承認') {
       const target = state.requests.get(data.requestId);
