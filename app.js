@@ -906,6 +906,38 @@
     return input.value;
   }
 
+  // 品種ごとの受注部数（P-045）。品種の項目はないので、品名に含まれる品種名で分け、当てはまらなければ品名で数える。
+  const productKinds = ['はがき', 'ハガキ', 'チラシ', 'フライヤー', '名刺', 'ポスター', 'パンフレット', 'リーフレット',
+    '封筒', '冊子', 'カタログ', 'DM', 'カレンダー', '伝票', 'シール', 'ステッカー', '会員証', 'チケット'];
+  const kindAliases = { 'ハガキ': 'はがき', 'フライヤー': 'チラシ', 'ステッカー': 'シール' };
+
+  function productKind(product) {
+    const kind = productKinds.find(name => product.includes(name));
+    return kind ? kindAliases[kind] || kind : product;
+  }
+
+  function renderKindTotals() {
+    const totals = new Map();
+    for (const order of [...state.orders.values()].filter(isListed)) {
+      const kind = productKind(order.product);
+      const total = totals.get(kind) || { orders: 0, quantity: 0, open: 0 };
+      total.orders += 1;
+      total.quantity += order.quantity;
+      if (!isDone(order)) total.open += order.quantity;
+      totals.set(kind, total);
+    }
+    const rows = [...totals.entries()].sort((a, b) => b[1].quantity - a[1].quantity);
+    $('kind-totals-list').replaceChildren(...rows.map(([kind, total]) => {
+      const row = element('tr');
+      row.append(element('td', kind), element('td', total.orders + '件'), element('td', copies(total.quantity)),
+        element('td', copies(total.open)));
+      return row;
+    }));
+    if (!rows.length) rowMessage($('kind-totals-list'), 4, '注文がありません。');
+    const sum = rows.reduce((value, [, total]) => value + total.quantity, 0);
+    $('kind-totals-summary').textContent = rows.length + '品種・合計 ' + copies(sum);
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -1283,6 +1315,7 @@
   function refresh() {
     state = workflow.buildState(events);
     renderStageCounts();
+    renderKindTotals();
     renderPending();
     renderOrders();
     renderRejected();
