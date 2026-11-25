@@ -469,10 +469,20 @@
     $('pending-count').textContent = pending.length + '件';
   }
 
+  // 日付（YYYY-MM-DD）から days 日前の日付を返す。
+  function daysBefore(date, days) {
+    const day = new Date(date + 'T00:00:00Z');
+    day.setUTCDate(day.getUTCDate() - days);
+    return day.toISOString().slice(0, 10);
+  }
+
   function renderHistory() {
     const list = $('history');
     list.replaceChildren();
-    for (const event of [...events].reverse()) {
+    // 取り込み日（importedAt）は台帳にだけ残す記録。相手部署へ書き出すCSVには含めない。
+    const since = $('history-filter').elements.since.value;
+    const shown = [...events].reverse().filter(event => !since || (event.importedAt && event.importedAt >= since));
+    for (const event of shown) {
       const definition = workflow.interfaces[event.type];
       const sent = definition.from === department;
       const row = element('tr');
@@ -497,10 +507,14 @@
         actionCell.textContent = '—';
       }
       row.append(element('td', sent ? '送信側' : '受信側'), element('td', definition.name),
-        element('td', event.orderId), detailCell, actionCell);
+        element('td', event.orderId), element('td', event.importedAt || '—'), detailCell, actionCell);
       list.append(row);
     }
-    if (!list.children.length) rowMessage(list, 5, 'やり取りはまだありません。');
+    if (!list.children.length) {
+      rowMessage(list, 6, events.length ? since + ' 以降に取り込んだやり取りはありません。' : 'やり取りはまだありません。');
+    }
+    $('history-count').textContent = shown.length === events.length ?
+      events.length + '件' : shown.length + '件 ／ 全' + events.length + '件';
   }
 
   function refresh() {
@@ -515,6 +529,14 @@
   }
 
   $('cancel-search').addEventListener('input', renderCancelled);
+  $('history-filter').addEventListener('change', renderHistory);
+  $('history-filter').addEventListener('click', event => {
+    const button = event.target.closest('button[data-since]');
+    if (!button) return;
+    $('history-filter').elements.since.value = button.dataset.since === '' ? '' :
+      daysBefore(localDate(), Number(button.dataset.since));
+    renderHistory();
+  });
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
@@ -549,7 +571,9 @@
     input.disabled = true;
     try {
       const text = await file.text();
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
+      const importedAt = localDate();
+      const incoming = workflow.readExchange(text, department).map(item => ({ ...item, importedAt }));
+      const result = workflow.mergeEvents(events, incoming);
       const draft = captureInput();
       events = result.events;
       refresh();
