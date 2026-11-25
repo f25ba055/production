@@ -337,6 +337,10 @@
       .filter(order => (!wantDue && !wantNew) ||
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
       .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
+    // 作業内容が同じ注文を固められるよう、品名順では品名でまとめる（同じ品名の中は優先度順のまま）。
+    if (filter.elements.sort.value === 'product') {
+      shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
+    }
 
     const productCounts = new Map();
     for (const order of all) productCounts.set(order.product, (productCounts.get(order.product) || 0) + 1);
@@ -595,7 +599,8 @@
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
     const idQuery = filter.elements.idSearch.value.trim();
     if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
-    return conditions.length ? conditions.join('・') : 'なし（全件）';
+    return (conditions.length ? conditions.join('・') : 'なし（全件）') +
+      '　並び順：' + (filter.elements.sort.value === 'product' ? '品名順' : '優先度順');
   }
 
   function updatePrintInfo() {
