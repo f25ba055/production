@@ -10,6 +10,8 @@
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     // 分納（P-026）。製造依頼・追加製造依頼を、回（deliveryNo）ごとの納品日と部数に分ける。1回につき1行。
     split:       { name: '分納指示', from: 'sales', fields: 'orderId requestId deliveryNo deliveryDate quantity' },
+    // 一時保留・再開の連絡（P-055）。保留中の注文は製造部で工程を進めない。
+    hold:        { name: '一時保留・再開連絡', from: 'sales', fields: 'orderId holdAction reason' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode printedQuantity extraCost' },
     // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
     receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
@@ -102,7 +104,7 @@
         requireThat(/^[A-Za-z0-9_-]+$/.test(value), field + ' が不正です。');
       }
     }
-    requireThat(event.type === 'reply' || event.type === 'order' ||
+    requireThat(event.type === 'reply' || event.type === 'order' || event.type === 'hold' ||
       !definition.fields.includes('reason') || event.reason.trim(), '理由を入力してください。');
     if (event.type === 'reply') {
       requireThat(['承認', '却下'].includes(event.decision), '依頼回答が不正です。');
@@ -141,6 +143,9 @@
       requireThat(event.spareQuantity === '' || (/^\d+$/.test(event.spareQuantity) && Number.isSafeInteger(Number(event.spareQuantity))),
         '予備部数は0以上の整数で入力してください。');
     }
+    if (event.type === 'hold') {
+      requireThat(['保留', '再開'].includes(event.holdAction), '一時保留・再開連絡の区分は「保留」か「再開」で入力してください。');
+    }
     if (event.type === 'handover') {
       requireThat(event.handoverNote.length <= 500, '申し送りは500文字以内で入力してください。');
     }
@@ -178,7 +183,7 @@
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         channel: event.channel || '未設定', receiveMethod: event.receiveMethod || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: '', handovers: []
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: '', handovers: [], onHold: false, holdReason: ''
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -252,6 +257,20 @@
       return;
     }
 
+    if (event.type === 'hold') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文は保留・再開できません。');
+      if (event.holdAction === '保留') {
+        requireThat(!order.onHold, 'この注文はすでに一時保留中です。');
+        order.onHold = true;
+        order.holdReason = event.reason;
+      } else {
+        requireThat(order.onHold, 'この注文は一時保留になっていません。');
+        order.onHold = false;
+        order.holdReason = '';
+      }
+      return;
+    }
+
     if (event.type === 'handover') {
       requireThat(!order.cancelled, 'キャンセル済みの注文には申し送りを残せません。');
       order.handovers.push({ note: event.handoverNote, date: event.createdAt || '', by: event.registeredBy || '' });
@@ -305,6 +324,7 @@
         }
         break;
       case 'progress':
+        requireThat(!order.onHold, '営業部から一時保留の連絡が来ている注文です。再開の連絡を受けてから工程を進めてください。');
         if (!order.progressAt || Date.parse(event.updatedAt) >= Date.parse(order.progressAt)) {
           order.progressAt = event.updatedAt;
           order.progress = event.stage;
@@ -322,6 +342,7 @@
           correctFinish(state, event, order, request, reported, copies);
           break;
         }
+        requireThat(!order.onHold, '営業部から一時保留の連絡が来ている注文です。再開の連絡を受けてから完了を報告してください。');
         requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
           request.answer === '承認' && !request.finished, '承認済みで未完了の製造依頼を選んでください。');
         requireThat(!order.proofStatus || order.proofStatus.startsWith('承認'), '校正の承認を確認してください。');

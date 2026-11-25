@@ -101,7 +101,10 @@
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
     if (type === 'paperMemo' || type === 'assign' || type === 'handover') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
-    return type === 'progress' ? available.filter(acceptsProgress) : available;
+    // 営業部が一時保留にした注文は、再開の連絡が来るまで進捗・完了を送れない（P-055）。
+    if (type === 'progress') return available.filter(acceptsProgress).filter(order => !order.onHold);
+    if (type === 'finish' && !correctionTarget) return available.filter(order => !order.onHold);
+    return available;
   }
 
   function requestChoices(type, order) {
@@ -796,6 +799,7 @@
     if (order.cancelled) return 'キャンセル済み';
     if (!order.approved) return request.answer === '却下' ? '製造依頼却下' : '製造承認待ち';
     if (order.initialFinished) return order.goodQuantity < order.quantity ? '完了・不足あり' : '完了';
+    if (order.onHold) return '一時保留中' + (order.progress ? '（' + order.progress + 'で停止）' : '');
     return order.progress || '製造承認済み';
   }
 
@@ -917,8 +921,9 @@
   // 注文詳細：工程が何度も更新された注文の経緯を、進捗通知の日時順に追えるようにする（P-028）。
   // 最新の状態だけでは分からない「いつ・どの工程に変わったか」を、完了見込み日の変化とあわせて並べる。
   function stageTimeline(order) {
-    const steps = events.filter(event => event.orderId === order.id && ['progress', 'handover'].includes(event.type))
-      .sort((a, b) => Date.parse(a.updatedAt || a.recordedAt) - Date.parse(b.updatedAt || b.recordedAt));
+    const stepTime = event => Date.parse(event.updatedAt || event.recordedAt || (event.importedAt || '1970-01-01') + 'T00:00:00');
+    const steps = events.filter(event => event.orderId === order.id && ['progress', 'handover', 'hold'].includes(event.type))
+      .sort((a, b) => stepTime(a) - stepTime(b));
     // 訂正された元の報告は除き、訂正版には印を付ける（P-038）。
     const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish' &&
       !(state.finishes.get(event.eventId) || {}).supersededBy);
@@ -930,6 +935,15 @@
     let previous = '';
     for (const step of steps) {
       const item = element('li');
+      if (step.type === 'hold') {
+        // 営業部からの一時保留・再開の連絡（P-055）。
+        item.className = 'hold-step';
+        item.append(element('time', step.recordedAt ? formatDateTime(step.recordedAt) : step.importedAt || ''), ' ',
+          element('strong', step.holdAction === '保留' ? '一時保留' : '再開'),
+          step.reason ? ' ' + step.reason : '');
+        list.append(item);
+        continue;
+      }
       if (step.type === 'handover') {
         // 申し送り（P-044）も経緯に並べる。
         item.className = 'handover-step';
@@ -1090,6 +1104,11 @@
       const row = element('tr');
       const dueToday = isDueToday(order, today);
       if (dueToday) row.className = 'due-today';
+      if (order.onHold) {
+        row.classList.add('on-hold');
+        row.title = '営業部から一時保留の連絡が来ています。再開の連絡があるまで作業を進めないでください。' +
+          (order.holdReason ? '（理由：' + order.holdReason + '）' : '');
+      }
       if (isDone(order)) row.classList.add('done');
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
         statusOf(order), proofText(order, today), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
@@ -1121,6 +1140,7 @@
       if (order.receiveMethod === '店頭受取') tags.push(['店頭受取', 'tag tag-pickup']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
       if (isProofOverdue(order, today)) tags.push(['校正期限切れ', 'tag tag-due']);
+      if (order.onHold) tags.unshift(['一時保留中', 'tag tag-hold']);
       if (tags.length) {
         const holder = element('div');
         for (const [label, className] of tags) {
@@ -1601,6 +1621,7 @@
     if (item.receiveMethod && item.receiveMethod !== '未設定') parts.push(item.receiveMethod);
     if (item.deliveryDate) parts.push('第' + item.deliveryNo + '回 ' + item.deliveryDate);
     if (item.proofDecision) parts.push('校正' + item.proofDecision);
+    if (item.holdAction) parts.push(item.holdAction + (item.reason ? '：' + item.reason : ''));
     return parts.join(' · ');
   }
 
@@ -1635,7 +1656,9 @@
     try {
       const text = await file.text();
       const importedAt = localDate();
-      const incoming = workflow.readExchange(text, department).map(item => ({ ...item, importedAt }));
+      // 取り込んだ日時（台帳だけの記録）。工程の経緯で、保留・再開の連絡などを時刻順に並べるのに使う。
+      const recordedAt = new Date().toISOString();
+      const incoming = workflow.readExchange(text, department).map(item => ({ ...item, importedAt, recordedAt }));
       pendingImport = { fileName: file.name, incoming };
       showImportPreview(file.name, incoming);
       show(file.name + ' の内容を表示しました。よければ「取り込む」を押してください。');
@@ -1671,10 +1694,15 @@
         duplicates);
       const notice = restoreInput(draft);
       const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
+      const fresh = new Set(result.events.slice(-result.accepted).map(event => event.eventId));
+      const holds = incoming.filter(item => item.type === 'hold' && fresh.has(item.eventId));
+      const holdNotice = holds.length ? '一時保留・再開の連絡が ' + holds.length + ' 件あります（' + holds.map(item =>
+        item.orderId + ' ' + item.holdAction).join('、') + '）。保留中の注文は作業を止めてください。' : '';
       show(fileName + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件' +
         (duplicates.length ? '（' + duplicates.slice(0, 3).map(duplicateLabel).join('、') +
           (duplicates.length > 3 ? ' ほか' : '') + '）' : '') + '。' + notice +
-        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
+        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : '') +
+        holdNotice);
     } catch (error) {
       closeImportPreview();
       show('取り込みを中止しました。' + error.message, true);
