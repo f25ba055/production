@@ -98,7 +98,42 @@
       .filter(request => type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') + request.requestId]);
+        (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') +
+        (type === 'reply' && request.dueDate ? '希望納期 ' + request.dueDate + ' · ' : '') +
+        (type === 'reply' && request.quantity ? copies(request.quantity) + ' · ' : '') + request.requestId]);
+  }
+
+  // 依頼回答の入力欄で、選んだ依頼の種別・希望納期・部数などを承認前に確認できるようにする。
+  // 注文変更依頼では、今の注文の値と並べて何が変わるかを示す。
+  function renderRequestDetail() {
+    const holder = $('request-detail');
+    if (!holder) return;
+    holder.replaceChildren();
+    const requestInput = $('fields').querySelector('[name="requestId"]');
+    const request = requestInput && state.requests.get(requestInput.value);
+    if (!request) {
+      holder.append(element('p', '依頼を選ぶと、依頼種別・希望納期・部数をここに表示します。'));
+      holder.className = 'request-detail empty-detail';
+      return;
+    }
+    holder.className = 'request-detail';
+    const order = state.orders.get(request.orderId);
+    const isChange = request.type === 'change';
+    const rows = [
+      ['依頼種別', workflow.interfaces[request.type].name],
+      ['注文', orderLabel(order)],
+      ['希望納期', request.dueDate ? request.dueDate + (isChange ? '（今の納期 ' + order.dueDate + '）' : '') :
+        '指定なし（今の納期 ' + order.dueDate + '）'],
+      ['部数', request.quantity ? copies(request.quantity) + (isChange ? '（今の部数 ' + copies(order.quantity) + '）' : '') :
+        '指定なし（今の部数 ' + copies(order.quantity) + '）']
+    ];
+    if (isChange) rows.push(['用紙', request.paper + '（今の用紙 ' + order.paper + '）']);
+    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常']);
+    if (request.reason) rows.push(['依頼の理由', request.reason]);
+    holder.append(element('h3', '回答する依頼の内容'));
+    const list = element('dl');
+    for (const [label, value] of rows) list.append(element('dt', label), element('dd', value));
+    holder.append(list);
   }
 
   function proofChoices(order) {
@@ -211,6 +246,13 @@
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
       formFields.append(label);
     }
+    if (type === 'reply') {
+      const detail = element('div');
+      detail.id = 'request-detail';
+      detail.setAttribute('aria-live', 'polite');
+      formFields.append(detail);
+      renderRequestDetail();
+    }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       definition.internal ? '製造部だけのメモです。台帳には残りますが、営業部へ渡すCSVは書き出しません。' :
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
@@ -246,6 +288,7 @@
         lost.push(fields[name][0]);
       }
     }
+    renderRequestDetail();
     return '入力中の内容は引き継ぎました。' +
       (lost.length ? '次の項目は選べなくなったため選び直してください：' + lost.join('、') : '');
   }
@@ -472,6 +515,7 @@
     renderForm(request.orderId);
     const requestInput = $('fields').querySelector('[name="requestId"]');
     requestInput.value = request.requestId;
+    renderRequestDetail();
     $('entry').scrollIntoView({ behavior: 'smooth', block: 'start' });
     ($('fields').querySelector('[name="decision"]') || requestInput).focus({ preventScroll: true });
     show(workflow.interfaces[request.type].name + '（' + request.requestId + '）への回答を入力してください。');
@@ -579,6 +623,9 @@
   $('order-filter').addEventListener('change', renderOrders);
   $('order-filter').addEventListener('input', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
+  $('fields').addEventListener('change', event => {
+    if (event.target.name === 'requestId') renderRequestDetail();
+  });
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
