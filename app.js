@@ -101,6 +101,24 @@
       .map(proof => [proof.proofId, '第' + proof.version + '版 · ' + proof.instruction]);
   }
 
+  // 同じ品名の別注文を取り違えないよう、品名には必ず注文IDと用紙を添える。
+  function orderLabel(order) {
+    return order.product + '（' + order.paper + '）· ' + order.id;
+  }
+
+  function productCell(cell, order, sameName) {
+    cell.replaceChildren(element('span', order.product));
+    if (sameName) {
+      const tag = element('span', '同名あり');
+      tag.className = 'tag tag-same';
+      tag.title = '同じ品名の注文がほかにもあります。注文IDと用紙で確認してください。';
+      cell.append(' ', tag);
+    }
+    const detail = element('div', order.id + ' · ' + order.paper);
+    detail.className = 'sub';
+    cell.append(detail);
+  }
+
   function automaticField(type, field) {
     return field === 'updatedAt' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
@@ -110,7 +128,7 @@
   function inputFor(type, field, order) {
     const [, kind] = fields[field];
     if (field === 'orderId') {
-      return select(field, orderChoices(type).map(item => [item.id, item.product + ' · ' + item.id]));
+      return select(field, orderChoices(type).map(item => [item.id, orderLabel(item)]));
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
     if (field === 'proofId') return select(field, proofChoices(order));
@@ -281,6 +299,9 @@
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
       .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
 
+    const productCounts = new Map();
+    for (const order of all) productCounts.set(order.product, (productCounts.get(order.product) || 0) + 1);
+
     for (const order of shown) {
       const row = element('tr');
       const dueToday = isDueToday(order, today);
@@ -289,6 +310,7 @@
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
+      productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
