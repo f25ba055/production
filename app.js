@@ -387,6 +387,11 @@
     return order.progress || '製造承認済み';
   }
 
+  // 校正の状況（版番号は「校正版」の列に分けて出す, P-024）。
+  function proofState(order) {
+    return order.proofStatus ? order.proofStatus.replace(/（第\d+版）$/, '') : '—';
+  }
+
   function rowMessage(tableBody, columns, message) {
     const row = element('tr');
     const cell = element('td', message);
@@ -498,7 +503,8 @@
       if (dueToday) row.className = 'due-today';
       if (isDone(order)) row.classList.add('done');
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
-        statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
+        statusOf(order), proofState(order), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
+        order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
@@ -523,7 +529,7 @@
       list.append(row);
     }
     if (!list.children.length) {
-      rowMessage(list, 10, all.length ? '条件に合う注文はありません。' : '注文がありません。');
+      rowMessage(list, 11, all.length ? '条件に合う注文はありません。' : '注文がありません。');
     }
     $('order-count').textContent = shown.length === all.length ?
       all.length + '件' : shown.length + '件 ／ 全' + all.length + '件';

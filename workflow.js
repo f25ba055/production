@@ -125,7 +125,7 @@
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         channel: event.channel || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', paperMemos: []
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, paperMemos: []
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -189,6 +189,7 @@
           '前の校正に修正依頼があり、版番号が上がっていることを確認してください。');
         state.proofs.set(event.proofId, { ...event, answer: '' });
         order.proofStatus = '回答待ち（第' + event.version + '版）';
+        order.proofVersion = Number(event.version);
         break;
       }
       case 'proofReply':
