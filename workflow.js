@@ -486,20 +486,27 @@
     });
   }
 
+  // 台帳の先頭には、イベントが0件でも部署が分かるよう、event が空の「部署の行」を必ず入れる（P-041）。
   function exportBackup(department, events) {
-    return encodeCsv([['department', 'event'], ...events.map(event => [department, JSON.stringify(event)])]);
+    return encodeCsv([['department', 'event'], [department, ''],
+      ...events.map(event => [department, JSON.stringify(event)])]);
   }
 
   function readBackup(department, text) {
     const [header, ...rows] = decodeCsv(text);
     requireThat(JSON.stringify(header) === '["department","event"]', '台帳保存用のCSVを選んでください。');
-    const events = rows.map(row => {
-      requireThat(row.length === 2 && row[0] === department, '自部署で保存した台帳を選んでください。');
-      return withDefaults(JSON.parse(row[1]));
-    });
+    // 部署の行もイベントもない台帳（部署の行を入れる前に保存した、注文0件の台帳）は、どの部署のものか分からないので開かない。
+    requireThat(rows.length, '注文が0件の古い形式の台帳のため、どの部署の台帳か判別できません。今の台帳はそのままにします。');
+    const departments = new Set(rows.map(row => row[0]));
+    requireThat(rows.every(row => row.length === 2) && departments.size === 1 && departments.has(department),
+      '自部署で保存した台帳を選んでください（' + [...departments].map(name => departmentNames[name] || name).join('・') +
+      'の台帳です）。今の台帳はそのままにします。');
+    const events = rows.filter(row => row[1] !== '').map(row => withDefaults(JSON.parse(row[1])));
     buildState(events);
     return events;
   }
+
+  const departmentNames = { sales: '営業部', factory: '製造部' };
 
   globalThis.PrintWorkflow = { interfaces, stages, reasonCodes, availableOrder, buildState, mergeEvents,
     exportExchange, readExchange, exportBackup, readBackup };
