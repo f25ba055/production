@@ -56,13 +56,21 @@
       number.toString(36).padStart(7, '0')).join('');
   }
 
+  // 当初分が完了した注文は、承認済みで未完了の追加製造がある場合だけ進捗を送れる。
+  function acceptsProgress(order) {
+    return !order.initialFinished || [...state.requests.values()].some(request =>
+      request.orderId === order.id && request.type === 'additional' &&
+      request.answer === '承認' && !request.finished);
+  }
+
   function orderChoices(type) {
     const orders = [...state.orders.values()];
     if (type === 'reply') {
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
-    return orders.filter(workflow.availableOrder);
+    const available = orders.filter(workflow.availableOrder);
+    return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
 
   function requestChoices(type, order) {
@@ -134,6 +142,7 @@
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
+      type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
   }
