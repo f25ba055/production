@@ -569,16 +569,19 @@
       .filter(order => !wantAssignee || order.assignee === (wantAssignee === '-' ? '' : wantAssignee))
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
-        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
-      .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
-    // 作業内容が同じ注文を固められるよう、品名順では品名でまとめる（同じ品名の中は優先度順のまま）。
-    if (filter.elements.sort.value === 'product') {
-      shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
+        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)));
+    // 並び順（P-029）。初期表示は納期順。登録順は新しく登録した注文が上（all の並びのまま）。
+    // 納期順・優先度順・品名順は、まず優先度順に並べてから並べ替える（安定ソートなので同じ納期・品名の中は優先度順）。
+    const sortMode = filter.elements.sort.value;
+    if (sortMode !== 'registered') {
+      shown.sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
+      if (sortMode === 'due') shown.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      // 作業内容が同じ注文を固められるよう、品名順では品名でまとめる（P-014）。
+      if (sortMode === 'product') shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
+      // 校正の回答期限が過ぎた注文は先頭に出す（P-027）。期限切れどうしは期限が古いものを上にする。
+      shown.sort((a, b) => Number(isProofOverdue(b, today)) - Number(isProofOverdue(a, today)) ||
+        (isProofOverdue(a, today) ? a.proofDueDate.localeCompare(b.proofDueDate) : 0));
     }
-    // 校正の回答期限が過ぎた注文は、どの並び順でも先頭に出す（P-027）。
-    // 期限切れどうしは、期限を長く過ぎているもの（期限が古いもの）を上にする。
-    shown.sort((a, b) => Number(isProofOverdue(b, today)) - Number(isProofOverdue(a, today)) ||
-      (isProofOverdue(a, today) ? a.proofDueDate.localeCompare(b.proofDueDate) : 0));
 
     const productCounts = new Map();
     for (const order of all) productCounts.set(order.product, (productCounts.get(order.product) || 0) + 1);
@@ -951,7 +954,7 @@
     const idQuery = filter.elements.idSearch.value.trim();
     if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
     return (conditions.length ? conditions.join('・') : 'なし（全件）') +
-      '　並び順：' + (filter.elements.sort.value === 'product' ? '品名順' : '優先度順');
+      '　並び順：' + filter.elements.sort.selectedOptions[0].textContent;
   }
 
   function updatePrintInfo() {
