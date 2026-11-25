@@ -519,6 +519,52 @@
     $('cancelled-count').textContent = approved.length + '件';
   }
 
+  // 「確認した」を押した時点の未回答依頼を覚えておき、後から増えた件数を数える。
+  const checkedKey = department + '-checked-requests';
+  let checked = loadChecked();
+
+  function loadChecked() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(checkedKey));
+      return saved && Array.isArray(saved.ids) ? saved : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function unansweredRequests() {
+    return [...state.requests.values()].filter(request => !request.answer);
+  }
+
+  function renderUnanswered() {
+    const unanswered = unansweredRequests();
+    const known = new Set(checked ? checked.ids : []);
+    const added = unanswered.filter(request => !known.has(request.requestId));
+    const breakdown = requestTypeCounts(added);
+    $('unanswered-summary').textContent = '未回答の依頼 ' + unanswered.length + '件 ／ ' +
+      (checked ? '前回の確認（' + new Date(checked.at).toLocaleString('ja-JP') + '）から増えた分 ' : 'まだ確認していない分 ') +
+      added.length + '件' + (breakdown ? '（' + breakdown + '）' : '');
+    $('mark-checked').disabled = added.length === 0;
+  }
+
+  function requestTypeCounts(requests) {
+    const counts = new Map();
+    for (const request of requests) counts.set(request.type, (counts.get(request.type) || 0) + 1);
+    return [...counts].map(([type, count]) => workflow.interfaces[type].name + ' ' + count + '件').join('、');
+  }
+
+  function markChecked() {
+    const ids = new Set(checked ? checked.ids : []);
+    for (const request of unansweredRequests()) ids.add(request.requestId);
+    checked = { ids: [...ids], at: new Date().toISOString() };
+    try {
+      localStorage.setItem(checkedKey, JSON.stringify(checked));
+    } catch {
+      show('確認した時点を保存できませんでした。この画面を閉じるまでは有効です。', true);
+    }
+    renderUnanswered();
+  }
+
   // 承認・却下をまだ出していない依頼だけの一覧。届いた順（古い依頼が上）に並べる。
   function requestSummary(request) {
     const parts = [];
@@ -626,6 +672,7 @@
     renderRejected();
     renderHistory();
     renderCancelled();
+    renderUnanswered();
     renderForm();
   }
 
@@ -638,6 +685,8 @@
       daysBefore(localDate(), Number(button.dataset.since));
     renderHistory();
   });
+
+  $('mark-checked').addEventListener('click', markChecked);
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());

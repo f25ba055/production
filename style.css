@@ -80,6 +80,8 @@ tr.done td { color: #5f7375; background: #f6f8f7; }
 tr.rush td:first-child { box-shadow: inset 4px 0 0 #b3261e; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
+.unanswered { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.unanswered p { margin: 0; font-weight: 600; }
 #csv-types { columns: 2; }
 .request-detail { grid-column: 1 / -1; padding: .6rem .8rem; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; background: var(--accent-light); }
 .request-detail h3 { margin: 0 0 .2rem; font-size: .95rem; }
