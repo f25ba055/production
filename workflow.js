@@ -179,8 +179,12 @@
         requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
           request.answer === '承認' && !request.finished, '承認済みで未完了の製造依頼を選んでください。');
         requireThat(!order.proofStatus || order.proofStatus.startsWith('承認'), '校正の承認を確認してください。');
-        requireThat(Number(event.goodQuantity) + Number(event.shortageQuantity) === request.targetQuantity,
-          '良品部数と不足部数の合計を対象依頼の部数に合わせてください。');
+        const reported = Number(event.goodQuantity) + Number(event.shortageQuantity);
+        const copies = value => Number(value).toLocaleString('ja-JP') + '部';
+        requireThat(reported === request.targetQuantity,
+          '良品部数と不足部数の合計を対象依頼の部数に合わせてください。予定部数は' + copies(request.targetQuantity) +
+          '、入力の合計は' + copies(reported) + '（良品' + copies(event.goodQuantity) +
+          '＋不足' + copies(event.shortageQuantity) + '）です。');
         request.finished = true;
         request.goodQuantity = Number(event.goodQuantity);
         request.shortageQuantity = Number(event.shortageQuantity);
