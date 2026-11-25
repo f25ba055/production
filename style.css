@@ -53,6 +53,8 @@ body { padding-bottom: 5rem; }
 .io-section { display: grid; gap: 1rem; }
 .io-section section { display: grid; gap: .5rem; }
 .io-section h2 { margin: 0; }
+.backup-status { margin: 0; font-size: .85rem; color: #486062; }
+.backup-status[data-unsaved="true"] { color: #8f2618; font-weight: 600; }
 .import-preview { padding: .6rem .8rem; border: 1px solid var(--line); border-left: 4px solid #c16c11; border-radius: 4px; background: #fffaf2; }
 .import-preview h3 { margin: 0 0 .3rem; font-size: .95rem; }
 .import-preview p { margin: .2rem 0; overflow-wrap: anywhere; }

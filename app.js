@@ -1347,6 +1347,7 @@
     state = workflow.buildState(events);
     renderStageCounts();
     renderKindTotals();
+    updateBackupStatus();
     renderPending();
     renderOrders();
     renderRejected();
@@ -1621,9 +1622,40 @@
     window.print();
   });
 
+  // 最後に台帳をCSVへ保存した時刻（P-047）。一日の終わりの保存忘れに気づけるよう、保存後に変更があれば知らせる。
+  // 時刻はこの端末のブラウザに覚えておく（使えない環境では、画面を開いている間だけ覚える）。
+  const backupStorageKey = 'production-' + department + '-last-backup';
+  let lastBackupAt = '';
+  let savedSignature = '';
+  try { lastBackupAt = localStorage.getItem(backupStorageKey) || ''; } catch (error) { lastBackupAt = ''; }
+
+  function ledgerSignature() {
+    return events.length + ':' + (events.at(-1)?.eventId || '');
+  }
+
+  function updateBackupStatus() {
+    const status = $('backup-status');
+    const changed = ledgerSignature() !== savedSignature;
+    status.textContent = (lastBackupAt ? '最後に保存：' + formatDateTime(lastBackupAt) : 'この端末ではまだ台帳を保存していません。') +
+      (changed && events.length ? '　保存していない変更があります。帰る前に保存してください。' : '');
+    status.dataset.unsaved = String(changed && events.length > 0);
+  }
+
   $('save-backup').addEventListener('click', () => {
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
-    show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
+    lastBackupAt = new Date().toISOString();
+    savedSignature = ledgerSignature();
+    try { localStorage.setItem(backupStorageKey, lastBackupAt); } catch (error) { /* 覚えられない環境では画面を開いている間だけ表示する */ }
+    updateBackupStatus();
+    show('台帳を保存しました（' + formatDateTime(lastBackupAt) + '）。再開時は「台帳を開く」を使ってください。');
+  });
+
+  // 保存していない変更があるまま画面を閉じようとしたら、ブラウザの確認を出す。
+  window.addEventListener('beforeunload', event => {
+    if (events.length && ledgerSignature() !== savedSignature) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
   });
 
   $('backup').addEventListener('change', async event => {
@@ -1634,6 +1666,7 @@
       const saved = workflow.readBackup(department, await file.text());
       if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
       events = saved;
+      savedSignature = ledgerSignature();
       refresh();
       show('保存済みの台帳を開きました。');
     } catch (error) {
