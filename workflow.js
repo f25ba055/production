@@ -8,7 +8,7 @@
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
-    reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason' },
+    reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode' },
     // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
     receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
@@ -25,13 +25,16 @@
 
   // 列を追加する前の形式。旧形式のCSV・台帳も読めるよう、足りない列は既定値で補う。
   // 受付経路（channel, P-011）の列がない旧形式は「未設定」として読む。
-  const fieldDefaults = { rush: '通常', channel: '未設定' };
+  // 却下理由の分類（reasonCode, P-022）の列がない旧形式の依頼回答は、分類なし（空）として読む。
+  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '' };
   const legacyFields = {
     order: [
       interfaces.order.fields.filter(field => field !== 'channel'),
       interfaces.order.fields.filter(field => field !== 'rush' && field !== 'channel')
-    ]
+    ],
+    reply: [interfaces.reply.fields.filter(field => field !== 'reasonCode')]
   };
+  const reasonCodes = ['資材不足', '希望納期不可', '設備都合', '仕様不可', 'その他'];
   const rushValues = ['通常', '特急'];
   const channelValues = ['店頭', '電話', 'メール', '未設定'];
 
@@ -47,7 +50,7 @@
 
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
-  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note'];
+  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
@@ -85,7 +88,11 @@
       !definition.fields.includes('reason') || event.reason.trim(), '理由を入力してください。');
     if (event.type === 'reply') {
       requireThat(['承認', '却下'].includes(event.decision), '依頼回答が不正です。');
-      requireThat(event.decision !== '却下' || event.reason.trim(), '却下理由を入力してください。');
+      // 却下は分類（reasonCode）か理由のどちらかが必要。旧形式の却下は理由だけが入っている。
+      requireThat(event.decision !== '却下' || event.reasonCode || event.reason.trim(), '却下理由を選んでください。');
+      requireThat(event.reasonCode === '' || (event.decision === '却下' && reasonCodes.includes(event.reasonCode)),
+        '却下理由の分類が不正です。');
+      requireThat(event.reasonCode !== 'その他' || event.reason.trim(), '却下理由が「その他」のときは、理由（補足）を入力してください。');
     }
     if (event.type === 'order') {
       requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
@@ -174,6 +181,7 @@
       request.answer = event.decision;
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
       request.answerReason = event.reason;
+      request.answerReasonCode = event.reasonCode || '';
       return;
     }
 
@@ -374,6 +382,6 @@
     return events;
   }
 
-  globalThis.PrintWorkflow = { interfaces, stages, availableOrder, buildState, mergeEvents,
+  globalThis.PrintWorkflow = { interfaces, stages, reasonCodes, availableOrder, buildState, mergeEvents,
     exportExchange, readExchange, exportBackup, readBackup };
 })();

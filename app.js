@@ -11,7 +11,7 @@
     dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
-    decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
+    decision: ['依頼回答', ['承認', '却下']], reasonCode: ['却下理由の分類', workflow.reasonCodes], confirmedDueDate: ['確定納期', 'date'],
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
@@ -306,6 +306,16 @@
     note.textContent = copies(target) + ' − 良品 ' + copies(count) + ' で自動計算しました（直すこともできます）。';
   }
 
+  // 却下理由は集計できるよう分類から選び、必要なら補足を付ける（P-022）。分類は却下のときだけ出す。
+  function updateReasonCode() {
+    const decision = $('fields').querySelector('[name="decision"]');
+    const code = $('fields').querySelector('[name="reasonCode"]');
+    if (!decision || !code) return;
+    const rejecting = decision.value === '却下';
+    code.closest('label').hidden = !rejecting;
+    if (!rejecting) code.value = '';
+  }
+
   // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
   function isOldCompletedDate(value) {
     return Boolean(value) && value < daysBefore(localDate(), 1);
@@ -327,11 +337,15 @@
     formFields.replaceChildren();
     edited.clear();
 
-    for (const field of definition.fields) {
+    // 入力欄の並び。CSVの列順のままだと却下理由の分類が補足の後になるので、分類を先に出す。
+    const fieldOrder = type === 'reply' ? definition.fields.filter(field => field !== 'reasonCode')
+      .flatMap(field => field === 'reason' ? ['reasonCode', 'reason'] : [field]) : definition.fields;
+    for (const field of fieldOrder) {
       if (automaticField(type, field)) continue;
       const label = element('label');
       const input = inputFor(type, field, order);
-      input.required = !['comment', 'confirmedDueDate', 'note'].includes(field) &&
+      // 却下理由の分類は却下のときだけ必須なので、送信時に確かめる（承認のときは隠れて空のまま）。
+      input.required = !['comment', 'confirmedDueDate', 'note', 'reasonCode'].includes(field) &&
         !(field === 'reason' && type === 'reply');
       if (field === 'orderId' && selectedOrder) input.value = selectedOrder;
       if (field === 'orderId') input.addEventListener('change', () => {
@@ -346,7 +360,10 @@
         if (unsaved) show('注文を切り替えました。製造完了報告の内容を入力し直してください。');
         formFields.querySelector('[name="orderId"]').focus();
       });
-      label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
+      const caption = type === 'reply' && field === 'reason' ? '理由（補足）' :
+        field === 'reasonCode' ? '却下理由の分類（却下のとき必須）' : fields[field][0];
+      label.append(element('span', caption + (input.required ? ' *' : '')), input);
+      if (field === 'reasonCode') label.classList.add('reason-code');
       if (field === 'instruction') widenable(label, input);
       if (field === 'shortageQuantity' && type === 'finish') {
         const note = element('span');
@@ -366,6 +383,7 @@
       formFields.append(label);
     }
     if (type === 'finish') autoShortage();
+    if (type === 'reply') updateReasonCode();
     if (type === 'reply') {
       const detail = element('div');
       detail.id = 'request-detail';
@@ -691,8 +709,9 @@
       const content = ['paper', 'quantity', 'dueDate', 'reason'].filter(field => request[field])
         .map(field => fields[field][0] + '：' + (field === 'quantity' ? copies(request[field]) : request[field]))
         .join('\n');
+      const reason = [request.answerReasonCode, request.answerReason].filter(Boolean).join('：');
       const values = [order.id, order.product, workflow.interfaces[request.type].name, request.requestId,
-        content, request.answerReason];
+        content, reason];
       const row = element('tr');
       row.append(...values.map(value => element('td', value || '—')));
       row.cells[4].className = 'multiline';
@@ -940,6 +959,7 @@
   $('order-filter').addEventListener('input', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
   $('fields').addEventListener('change', event => {
+    if (event.target.name === 'decision') updateReasonCode();
     if (event.target.name === 'requestId') {
       renderRequestDetail();
       autoShortage();
@@ -953,6 +973,20 @@
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
+    // 未選択のまま（無効な「選択してください」のまま）の選択欄は送信されないので、空欄として補う。
+    for (const field of workflow.interfaces[type].fields) {
+      if (!automaticField(type, field) && data[field] === undefined) data[field] = '';
+    }
+    if (type === 'reply' && data.decision === '却下' && !data.reasonCode) {
+      show('却下理由の分類を選んでください。', true);
+      $('fields').querySelector('[name="reasonCode"]').focus();
+      return;
+    }
+    if (type === 'reply' && data.reasonCode === 'その他' && !data.reason.trim()) {
+      show('却下理由が「その他」のときは、理由（補足）を入力してください。', true);
+      $('fields').querySelector('[name="reason"]').focus();
+      return;
+    }
     if (type === 'finish' && isOldCompletedDate(data.completedDate) &&
       !confirm('完成日が ' + data.completedDate + ' になっています（昨日より前の日付です）。\n' +
         'このまま製造完了報告を送りますか？')) {
