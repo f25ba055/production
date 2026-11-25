@@ -248,21 +248,8 @@
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    const today = localDate();
-    const filter = $('order-filter');
-    const wantDue = filter.elements.dueToday.checked;
-    const wantNew = filter.elements.notStarted.checked;
-    const wantRush = filter.elements.rush.checked;
-    const all = [...state.orders.values()].reverse();
-    // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
-    // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
-    const shown = all
-      .filter(order => !wantRush || order.rush)
-      .filter(order => (!wantDue && !wantNew) ||
-        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
-      .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
-
-    for (const order of shown) {
+    for (const order of [...state.orders.values()].reverse()) {
+      if (order.cancelled) continue;
       const row = element('tr');
       const dueToday = isDueToday(order, today);
       if (dueToday) row.className = 'due-today';
@@ -287,14 +274,30 @@
       row.append(...cells);
       list.append(row);
     }
-    if (!list.children.length) {
-      rowMessage(list, 10, all.length ? '条件に合う注文はありません。' : '注文がありません。');
+    $('order-count').textContent = list.children.length + '件';
+    if (!list.children.length) rowMessage(list, 10, '注文がありません。');
+  }
+
+  function renderCancelled() {
+    const list = $('cancelled');
+    list.replaceChildren();
+    const approved = [...state.requests.values()]
+      .filter(request => request.type === 'cancel' && request.answer === '承認').reverse();
+    const keyword = $('cancel-search').value.trim().toLowerCase();
+    const matched = approved.map(request => {
+      const order = state.orders.get(request.orderId);
+      return [order.id, order.product, order.paper, order.quantity + '部', request.requestId,
+        request.reason, request.answerReason];
+    }).filter(values => [values[0], values[1], values[4]].some(value => value.toLowerCase().includes(keyword)));
+    for (const values of matched) {
+      const row = element('tr');
+      row.append(...values.map(value => element('td', value || '—')));
+      list.append(row);
     }
-    $('order-count').textContent = shown.length === all.length ?
-      all.length + '件' : shown.length + '件 ／ 全' + all.length + '件';
-    $('due-today-count').textContent = '（' + all.filter(order => isDueToday(order, today)).length + '件）';
-    $('not-started-count').textContent = '（' + all.filter(isNotStarted).length + '件）';
-    $('rush-count').textContent = '（' + all.filter(order => order.rush).length + '件）';
+    if (!list.children.length) {
+      rowMessage(list, 7, approved.length ? '該当する記録がありません。' : '取消を承認した注文はありません。');
+    }
+    $('cancelled-count').textContent = approved.length + '件';
   }
 
   function renderHistory() {
@@ -335,8 +338,11 @@
     state = workflow.buildState(events);
     renderOrders();
     renderHistory();
+    renderCancelled();
     renderForm();
   }
+
+  $('cancel-search').addEventListener('input', renderCancelled);
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
