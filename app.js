@@ -470,6 +470,37 @@
     note.textContent = copies(target) + ' − 良品 ' + copies(count) + ' で自動計算しました（直すこともできます）。';
   }
 
+  // 遅延理由の候補（P-054）。毎日使う理由をボタンで選べるようにし、これまでに使った理由も候補に出す。
+  // 選んだあとに書き足すこともできる。
+  const delayReasonPresets = ['用紙入荷待ち', '機械調整', '前工程の遅れ', '校正回答待ち', '人員不足', 'インキ・資材待ち'];
+
+  function delayReasonChoices(input) {
+    const used = events.filter(event => event.type === 'delay').map(event => event.reason.trim()).filter(Boolean);
+    const candidates = [...new Set([...delayReasonPresets, ...used.reverse()])];
+    const list = element('datalist');
+    list.id = 'delay-reason-list';
+    list.append(...candidates.map(reason => option(reason, '')));
+    input.setAttribute('list', list.id);
+    input.autocomplete = 'off';
+    const holder = element('div');
+    holder.className = 'reason-chips';
+    holder.setAttribute('role', 'group');
+    holder.setAttribute('aria-label', '遅延理由の候補');
+    for (const reason of delayReasonPresets) {
+      const chip = element('button', reason);
+      chip.type = 'button';
+      chip.className = 'secondary chip';
+      chip.addEventListener('click', () => {
+        input.value = reason;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      });
+      holder.append(chip);
+    }
+    holder.append(list);
+    return holder;
+  }
+
   // 却下理由は集計できるよう分類から選び、必要なら補足を付ける（P-022）。分類は却下のときだけ出す。
   function updateReasonCode() {
     const decision = $('fields').querySelector('[name="decision"]');
@@ -621,6 +652,7 @@
       label.append(element('span', caption + (input.required ? ' *' : '')), input);
       if (field === 'reasonCode') label.classList.add('reason-code');
       if (field === 'instruction') widenable(label, input);
+      if (field === 'reason' && type === 'delay') label.append(delayReasonChoices(input));
       if (field === 'shortageQuantity' && type === 'finish') {
         const note = element('span');
         note.id = 'shortage-note';
