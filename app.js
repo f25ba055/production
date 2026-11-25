@@ -8,7 +8,7 @@
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
@@ -185,8 +185,9 @@
     return isOpen(order) && order.approved && !order.progress;
   }
 
+  // 特急 → 今日納期 → 未着手 の順に上へ並べる。
   function priorityOf(order, today) {
-    return (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
+    return (order.rush ? 0 : 4) + (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
   }
 
   function renderOrders() {
@@ -196,9 +197,12 @@
     const filter = $('order-filter');
     const wantDue = filter.elements.dueToday.checked;
     const wantNew = filter.elements.notStarted.checked;
+    const wantRush = filter.elements.rush.checked;
     const all = [...state.orders.values()].reverse();
+    // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
+      .filter(order => !wantRush || order.rush)
       .filter(order => (!wantDue && !wantNew) ||
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
       .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
@@ -211,7 +215,9 @@
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       const cells = values.map(value => element('td', value));
+      if (order.rush) row.classList.add('rush');
       const tags = [];
+      if (order.rush) tags.push(['特急', 'tag tag-rush']);
       if (dueToday) tags.push(['今日納期', 'tag tag-due']);
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
       if (tags.length) {
@@ -233,6 +239,7 @@
       all.length + '件' : shown.length + '件 ／ 全' + all.length + '件';
     $('due-today-count').textContent = '（' + all.filter(order => isDueToday(order, today)).length + '件）';
     $('not-started-count').textContent = '（' + all.filter(isNotStarted).length + '件）';
+    $('rush-count').textContent = '（' + all.filter(order => order.rush).length + '件）';
   }
 
   function renderHistory() {
