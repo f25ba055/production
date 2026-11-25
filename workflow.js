@@ -3,7 +3,7 @@
 
   // 両部署の取り込み・書き出しで共通のCSV仕様。
   const interfaces = {
-    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush' },
+    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush channel' },
     change:      { name: '注文変更依頼', from: 'sales', fields: 'requestId orderId paper quantity dueDate reason' },
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
@@ -23,11 +23,16 @@
   }
 
   // 列を追加する前の形式。旧形式のCSV・台帳も読めるよう、足りない列は既定値で補う。
-  const fieldDefaults = { rush: '通常' };
+  // 受付経路（channel, P-011）の列がない旧形式は「未設定」として読む。
+  const fieldDefaults = { rush: '通常', channel: '未設定' };
   const legacyFields = {
-    order: interfaces.order.fields.filter(field => field !== 'rush')
+    order: [
+      interfaces.order.fields.filter(field => field !== 'channel'),
+      interfaces.order.fields.filter(field => field !== 'rush' && field !== 'channel')
+    ]
   };
   const rushValues = ['通常', '特急'];
+  const channelValues = ['店頭', '電話', 'メール', '未設定'];
 
   function withDefaults(event) {
     const filled = { ...event };
@@ -83,6 +88,7 @@
     }
     if (event.type === 'order') {
       requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
+      requireThat(channelValues.includes(event.channel), '受付経路は「店頭」「電話」「メール」のいずれかで入力してください。');
     }
     if (event.type === 'proofReply') {
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
@@ -117,6 +123,7 @@
       state.orders.set(event.orderId, {
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
+        channel: event.channel || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
         expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', paperMemos: []
       });
@@ -324,9 +331,9 @@
     requireThat(definition && !definition.internal && definition.from !== receivingDepartment,
       '相手部署から受信する種類のCSVを選んでください。');
     const expected = ['eventId', 'type', ...definition.fields];
-    const legacy = legacyFields[type] && ['eventId', 'type', ...legacyFields[type]];
+    const legacy = (legacyFields[type] || []).map(fields => JSON.stringify(['eventId', 'type', ...fields]));
     requireThat(JSON.stringify(header) === JSON.stringify(expected) ||
-      (legacy && JSON.stringify(header) === JSON.stringify(legacy)), 'CSVの見出しが仕様と一致しません。');
+      legacy.includes(JSON.stringify(header)), 'CSVの見出しが仕様と一致しません。');
     return rows.map((row, index) => {
       requireThat(row.length === header.length && row[1] === type, 'データ ' + (index + 1) + ' 件目の列数または種類が不正です。');
       return withDefaults(Object.fromEntries(header.map((field, position) => [field, row[position]])));

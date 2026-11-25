@@ -8,7 +8,7 @@
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
@@ -130,7 +130,7 @@
         '指定なし（今の部数 ' + copies(order.quantity) + '）']
     ];
     if (isChange) rows.push(['用紙', request.paper + '（今の用紙 ' + order.paper + '）']);
-    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常']);
+    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
     holder.append(element('h3', '回答する依頼の内容'));
     const list = element('dl');
@@ -159,6 +159,12 @@
     const detail = element('div', order.id + ' · ' + order.paper);
     detail.className = 'sub';
     cell.append(detail);
+    // 問い合わせ対応で営業に聞き直さなくて済むよう、受付経路（店頭・電話・メール）を出す（P-011）。
+    if (order.channel && order.channel !== '未設定') {
+      const channel = element('div', '受付：' + order.channel);
+      channel.className = 'sub channel';
+      cell.append(channel);
+    }
   }
 
   // 用紙の欄に、製造部内メモの仮手配・入庫の最新の日付を添える。
