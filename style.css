@@ -47,6 +47,7 @@ th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bo
 th { background: var(--accent-light); white-space: nowrap; }
 td { overflow-wrap: anywhere; }
 td:first-child, td:last-child { min-width: 5rem; }
+.multiline { white-space: pre-wrap; }
 .empty { text-align: center; padding: 1rem; color: #486062; }
 .count { margin-left: .6rem; color: #486062; font-size: .9rem; font-weight: normal; }
 summary { cursor: pointer; }

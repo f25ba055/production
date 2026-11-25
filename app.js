@@ -248,8 +248,9 @@
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    for (const order of [...state.orders.values()].reverse()) {
-      if (order.cancelled) continue;
+    const orders = [...state.orders.values()].filter(order =>
+      state.requests.get(order.originalRequestId).answer !== '却下');
+    for (const order of orders.reverse()) {
       const row = element('tr');
       const dueToday = isDueToday(order, today);
       if (dueToday) row.className = 'due-today';
@@ -276,28 +277,26 @@
     }
     $('order-count').textContent = list.children.length + '件';
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
+    $('order-count').textContent = orders.length + '件';
   }
 
-  function renderCancelled() {
-    const list = $('cancelled');
+  function renderRejected() {
+    const list = $('rejected');
     list.replaceChildren();
-    const approved = [...state.requests.values()]
-      .filter(request => request.type === 'cancel' && request.answer === '承認').reverse();
-    const keyword = $('cancel-search').value.trim().toLowerCase();
-    const matched = approved.map(request => {
+    const rejected = [...state.requests.values()].filter(request => request.answer === '却下').reverse();
+    for (const request of rejected) {
       const order = state.orders.get(request.orderId);
-      return [order.id, order.product, order.paper, order.quantity + '部', request.requestId,
-        request.reason, request.answerReason];
-    }).filter(values => [values[0], values[1], values[4]].some(value => value.toLowerCase().includes(keyword)));
-    for (const values of matched) {
+      const content = ['paper', 'quantity', 'dueDate', 'reason'].filter(field => request[field])
+        .map(field => fields[field][0] + '：' + request[field]).join('\n');
+      const values = [order.id, order.product, workflow.interfaces[request.type].name, request.requestId,
+        content, request.answerReason];
       const row = element('tr');
       row.append(...values.map(value => element('td', value || '—')));
+      row.cells[4].className = 'multiline';
       list.append(row);
     }
-    if (!list.children.length) {
-      rowMessage(list, 7, approved.length ? '該当する記録がありません。' : '取消を承認した注文はありません。');
-    }
-    $('cancelled-count').textContent = approved.length + '件';
+    if (!list.children.length) rowMessage(list, 6, '却下した依頼はありません。');
+    $('rejected-count').textContent = rejected.length + '件';
   }
 
   function renderHistory() {
@@ -337,6 +336,7 @@
   function refresh() {
     state = workflow.buildState(events);
     renderOrders();
+    renderRejected();
     renderHistory();
     renderCancelled();
     renderForm();
