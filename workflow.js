@@ -8,13 +8,15 @@
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
+    // 分納（P-026）。製造依頼・追加製造依頼を、回（deliveryNo）ごとの納品日と部数に分ける。1回につき1行。
+    split:       { name: '分納指示', from: 'sales', fields: 'orderId requestId deliveryNo deliveryDate quantity' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode' },
     // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
     receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
     paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
     assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' }
@@ -26,13 +28,15 @@
   // 列を追加する前の形式。旧形式のCSV・台帳も読めるよう、足りない列は既定値で補う。
   // 受付経路（channel, P-011）の列がない旧形式は「未設定」として読む。
   // 却下理由の分類（reasonCode, P-022）の列がない旧形式の依頼回答は、分類なし（空）として読む。
-  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '' };
+  // 分納の回（deliveryNo, P-026）の列がない旧形式の製造完了報告は、分納なし（空）として読む。
+  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '' };
   const legacyFields = {
     order: [
       interfaces.order.fields.filter(field => field !== 'channel'),
       interfaces.order.fields.filter(field => field !== 'rush' && field !== 'channel')
     ],
-    reply: [interfaces.reply.fields.filter(field => field !== 'reasonCode')]
+    reply: [interfaces.reply.fields.filter(field => field !== 'reasonCode')],
+    finish: [interfaces.finish.fields.filter(field => field !== 'deliveryNo')]
   };
   const reasonCodes = ['資材不足', '希望納期不可', '設備都合', '仕様不可', 'その他'];
   const rushValues = ['通常', '特急'];
@@ -50,11 +54,12 @@
 
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
-  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode'];
+  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
-  const dateFields = ['dueDate', 'confirmedDueDate', 'responseDueDate', 'expectedDate', 'completedDate', 'memoDate'];
+  const dateFields = ['dueDate', 'confirmedDueDate', 'responseDueDate', 'expectedDate', 'completedDate', 'memoDate',
+    'deliveryDate'];
 
   function requireThat(condition, message) {
     if (!condition) throw new Error(message);
@@ -101,6 +106,10 @@
     if (event.type === 'proofReply') {
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
       requireThat(event.proofDecision !== '修正依頼' || event.comment.trim(), '修正内容を入力してください。');
+    }
+    if (event.type === 'split' || (event.type === 'finish' && event.deliveryNo)) {
+      requireThat(/^\d+$/.test(event.deliveryNo) && Number(event.deliveryNo) >= 1 && Number(event.deliveryNo) <= 99,
+        '分納の回は1〜99の整数で入力してください。');
     }
     if (event.type === 'assign') {
       requireThat(event.assignee.trim().length <= 30, '担当者名は30文字以内で入力してください。');
@@ -186,6 +195,23 @@
     }
 
     // 用紙の仮手配は製造承認の前に行うこともあるため、キャンセル済みでなければ記録できる。
+    // 分納指示（P-026）。製造承認の前に届くこともあるため、キャンセル済みでなければ受け付ける。
+    if (event.type === 'split') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文は分納にできません。');
+      requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
+        request.answer !== '却下' && !request.finished, '分納にする製造依頼（未完了）が見つかりません。');
+      const deliveries = request.deliveries || (request.deliveries = []);
+      const no = Number(event.deliveryNo);
+      requireThat(!deliveries.some(delivery => delivery.no === no), '第' + no + '回の分納指示はすでにあります。');
+      const planned = deliveries.reduce((sum, delivery) => sum + delivery.quantity, 0) + Number(event.quantity);
+      requireThat(planned <= request.targetQuantity,
+        '分納の部数の合計（' + planned + '部）が依頼の部数（' + request.targetQuantity + '部）を超えています。');
+      deliveries.push({ no, date: event.deliveryDate, quantity: Number(event.quantity), finished: false,
+        goodQuantity: 0, shortageQuantity: 0, completedDate: '' });
+      deliveries.sort((a, b) => a.no - b.no);
+      return;
+    }
+
     // 班長が各注文に担当者を振る（P-025）。最後に登録した担当者を今の担当とする。
     if (event.type === 'assign') {
       requireThat(!order.cancelled, 'キャンセル済みの注文には担当者を登録できません。');
@@ -237,6 +263,31 @@
         requireThat(!order.proofStatus || order.proofStatus.startsWith('承認'), '校正の承認を確認してください。');
         const reported = Number(event.goodQuantity) + Number(event.shortageQuantity);
         const copies = value => Number(value).toLocaleString('ja-JP') + '部';
+        if (request.deliveries && request.deliveries.length) {
+          // 分納（P-026）は回ごとに完了報告を受け、すべての回がそろったら依頼を完了にする。
+          requireThat(event.deliveryNo, 'この依頼は分納です。完了した回を選んでください。');
+          const delivery = request.deliveries.find(item => item.no === Number(event.deliveryNo));
+          requireThat(delivery && !delivery.finished, '未完了の分納の回を選んでください。');
+          requireThat(reported === delivery.quantity,
+            '良品部数と不足部数の合計を、この回（第' + delivery.no + '回）の部数に合わせてください。予定部数は' +
+            copies(delivery.quantity) + '、入力の合計は' + copies(reported) + '（良品' + copies(event.goodQuantity) +
+            '＋不足' + copies(event.shortageQuantity) + '）です。');
+          delivery.finished = true;
+          delivery.goodQuantity = Number(event.goodQuantity);
+          delivery.shortageQuantity = Number(event.shortageQuantity);
+          delivery.completedDate = event.completedDate;
+          request.goodQuantity = (request.goodQuantity || 0) + delivery.goodQuantity;
+          request.shortageQuantity = (request.shortageQuantity || 0) + delivery.shortageQuantity;
+          order.goodQuantity += delivery.goodQuantity;
+          const planned = request.deliveries.reduce((sum, item) => sum + item.quantity, 0);
+          if (request.deliveries.every(item => item.finished) && planned === request.targetQuantity) {
+            request.finished = true;
+            request.completedDate = event.completedDate;
+            if (request.type === 'order') order.initialFinished = true;
+          }
+          break;
+        }
+        requireThat(!event.deliveryNo, 'この依頼は分納ではありません。分納の回は空にしてください。');
         requireThat(reported === request.targetQuantity,
           '良品部数と不足部数の合計を対象依頼の部数に合わせてください。予定部数は' + copies(request.targetQuantity) +
           '、入力の合計は' + copies(reported) + '（良品' + copies(event.goodQuantity) +

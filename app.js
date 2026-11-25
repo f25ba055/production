@@ -15,6 +15,7 @@
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
+    deliveryNo: ['分納の回'], deliveryDate: ['納品日', 'date'],
     receivedAt: ['受信日時'],
     assignee: ['担当者'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
@@ -106,9 +107,41 @@
         type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') +
+        (type === 'finish' ? copies(request.targetQuantity) + ' · ' + deliveryProgress(request) : '') +
         (type === 'reply' && request.dueDate ? '希望納期 ' + request.dueDate + ' · ' : '') +
         (type === 'reply' && request.quantity ? copies(request.quantity) + ' · ' : '') + request.requestId]);
+  }
+
+  // 分納（P-026）の進み具合。分納でない依頼は空文字。
+  function deliveryProgress(request) {
+    const deliveries = request.deliveries || [];
+    if (!deliveries.length) return '';
+    return '分納 ' + deliveries.filter(item => item.finished).length + '/' + deliveries.length + '回完了 · ';
+  }
+
+  // 分納の予定の合計が依頼の部数と合わないとき（分納指示の不足や、注文変更で部数が変わったとき）の注意。
+  function deliveryMismatch(request) {
+    const deliveries = request.deliveries || [];
+    const planned = deliveries.reduce((sum, item) => sum + item.quantity, 0);
+    return deliveries.length && planned !== request.targetQuantity ?
+      '分納の合計 ' + copies(planned) + ' が依頼の部数 ' + copies(request.targetQuantity) + ' と合いません' : '';
+  }
+
+  // 製造完了報告の「分納の回」の選択肢を、選んだ依頼の未完了の回で作り直す。分納でない依頼は「分納なし」だけ。
+  function updateDeliveryChoices() {
+    const input = $('fields').querySelector('[name="deliveryNo"]');
+    if (!input) return;
+    const request = state.requests.get($('fields').querySelector('[name="requestId"]')?.value);
+    const deliveries = (request && request.deliveries) || [];
+    if (!deliveries.length) {
+      input.replaceChildren(option('', '分納なし'));
+      input.disabled = true;
+      return;
+    }
+    input.disabled = false;
+    const placeholder = option('', '回を選んでください');
+    input.replaceChildren(placeholder, ...deliveries.filter(item => !item.finished).map(item =>
+      option(String(item.no), '第' + item.no + '回 · 納品日 ' + item.date + ' · ' + copies(item.quantity))));
   }
 
   // 依頼回答の入力欄で、選んだ依頼の種別・希望納期・部数などを承認前に確認できるようにする。
@@ -173,6 +206,32 @@
     }
   }
 
+  // 納期の欄に、分納（P-026）の回ごとの納品日・部数・完了状況を添える。
+  function deliveryCell(cell, order) {
+    const requests = [...state.requests.values()]
+      .filter(request => request.orderId === order.id && (request.deliveries || []).length);
+    for (const request of requests) {
+      const list = element('ul');
+      list.className = 'deliveries';
+      for (const item of request.deliveries) {
+        const line = element('li', '第' + item.no + '回 ' + item.date + ' ' + copies(item.quantity) +
+          (item.finished ? ' 完了（良品 ' + copies(item.goodQuantity) + '）' : ''));
+        if (item.finished) line.className = 'done';
+        list.append(line);
+      }
+      const head = element('div', (request.type === 'additional' ? '追加分の分納' : '分納') + ' ' +
+        request.deliveries.filter(item => item.finished).length + '/' + request.deliveries.length + '回完了');
+      head.className = 'sub delivery-head';
+      cell.append(head, list);
+      const mismatch = deliveryMismatch(request);
+      if (mismatch) {
+        const warning = element('div', mismatch);
+        warning.className = 'field-warning';
+        cell.append(warning);
+      }
+    }
+  }
+
   // 用紙の欄に、製造部内メモの仮手配・入庫の最新の日付を添える。
   function paperCell(cell, order) {
     for (const status of ['仮手配', '入庫']) {
@@ -197,6 +256,11 @@
       return select(field, orderChoices(type).map(item => [item.id, orderLabel(item)]));
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
+    if (field === 'deliveryNo') {
+      const input = element('select');
+      input.name = field;
+      return input;
+    }
     if (field === 'proofId') return select(field, proofChoices(order));
     if (Array.isArray(kind)) return select(field, kind.map(value => [value, value]));
 
@@ -288,7 +352,15 @@
       note.textContent = good.value ? '対象依頼を選ぶと、不足部数を自動で計算します。' : '';
       return;
     }
-    const target = request.targetQuantity;
+    // 分納の依頼は、選んだ回の部数から計算する（P-026）。
+    const deliveries = request.deliveries || [];
+    const delivery = deliveries.find(item => String(item.no) === form.querySelector('[name="deliveryNo"]')?.value);
+    if (deliveries.length && !delivery) {
+      shortage.value = '';
+      note.textContent = 'この依頼は分納です。分納の回を選ぶと、その回の部数から不足部数を計算します。';
+      return;
+    }
+    const target = delivery ? delivery.quantity : request.targetQuantity;
     if (!/^\d+$/.test(good.value)) {
       shortage.value = '';
       note.textContent = '良品部数を入れると、対象依頼の部数（' + copies(target) + '）から自動で計算します。';
@@ -382,7 +454,10 @@
       }
       formFields.append(label);
     }
-    if (type === 'finish') autoShortage();
+    if (type === 'finish') {
+      updateDeliveryChoices();
+      autoShortage();
+    }
     if (type === 'reply') updateReasonCode();
     if (type === 'reply') {
       const detail = element('div');
@@ -582,7 +657,8 @@
     for (const finish of finishes) {
       const item = element('li');
       item.className = 'finish';
-      item.append(element('time', finish.completedDate), ' ', element('strong', '製造完了報告'),
+      item.append(element('time', finish.completedDate), ' ',
+        element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '')),
         ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
       list.append(item);
     }
@@ -662,6 +738,7 @@
       const cells = values.map(value => element('td', value));
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       paperCell(cells[2], order);
+      deliveryCell(cells[4], order);
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
@@ -796,6 +873,8 @@
     if (request.quantity) parts.push(copies(request.quantity));
     if (request.dueDate) parts.push('希望納期 ' + request.dueDate);
     if (request.reason) parts.push('理由：' + request.reason);
+    if ((request.deliveries || []).length) parts.push('分納 ' + request.deliveries.length + '回（' +
+      request.deliveries.map(item => item.date + ' ' + copies(item.quantity)).join('、') + '）');
     return parts.join(' ／ ') || '—';
   }
 
@@ -962,8 +1041,10 @@
     if (event.target.name === 'decision') updateReasonCode();
     if (event.target.name === 'requestId') {
       renderRequestDetail();
+      updateDeliveryChoices();
       autoShortage();
     }
+    if (event.target.name === 'deliveryNo') autoShortage();
   });
   $('fields').addEventListener('input', event => {
     if (event.target.name === 'goodQuantity') autoShortage();
