@@ -3,7 +3,7 @@
 
   // 両部署の取り込み・書き出しで共通のCSV仕様。
   const interfaces = {
-    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate' },
+    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush' },
     change:      { name: '注文変更依頼', from: 'sales', fields: 'requestId orderId paper quantity dueDate reason' },
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
@@ -16,6 +16,23 @@
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
+  }
+
+  // 列を追加する前の形式。旧形式のCSV・台帳も読めるよう、足りない列は既定値で補う。
+  const fieldDefaults = { rush: '通常' };
+  const legacyFields = {
+    order: interfaces.order.fields.filter(field => field !== 'rush')
+  };
+  const rushValues = ['通常', '特急'];
+
+  function withDefaults(event) {
+    const filled = { ...event };
+    if (Object.hasOwn(interfaces, event.type)) {
+      for (const field of interfaces[event.type].fields) {
+        if (filled[field] === undefined && Object.hasOwn(fieldDefaults, field)) filled[field] = fieldDefaults[field];
+      }
+    }
+    return filled;
   }
 
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
@@ -59,6 +76,9 @@
       requireThat(['承認', '却下'].includes(event.decision), '依頼回答が不正です。');
       requireThat(event.decision !== '却下' || event.reason.trim(), '却下理由を入力してください。');
     }
+    if (event.type === 'order') {
+      requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
+    }
     if (event.type === 'proofReply') {
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
       requireThat(event.proofDecision !== '修正依頼' || event.comment.trim(), '修正内容を入力してください。');
@@ -84,7 +104,7 @@
       requireThat(!order && !request, '注文IDまたは依頼IDが重複しています。');
       state.orders.set(event.orderId, {
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
-        paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate,
+        paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         approved: false, cancelled: false, progress: '', progressAt: '',
         expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
       });
@@ -276,10 +296,12 @@
     const definition = Object.hasOwn(interfaces, type) && interfaces[type];
     requireThat(definition && definition.from !== receivingDepartment, '相手部署から受信する種類のCSVを選んでください。');
     const expected = ['eventId', 'type', ...definition.fields];
-    requireThat(JSON.stringify(header) === JSON.stringify(expected), 'CSVの見出しが仕様と一致しません。');
+    const legacy = legacyFields[type] && ['eventId', 'type', ...legacyFields[type]];
+    requireThat(JSON.stringify(header) === JSON.stringify(expected) ||
+      (legacy && JSON.stringify(header) === JSON.stringify(legacy)), 'CSVの見出しが仕様と一致しません。');
     return rows.map((row, index) => {
       requireThat(row.length === header.length && row[1] === type, 'データ ' + (index + 1) + ' 件目の列数または種類が不正です。');
-      return Object.fromEntries(header.map((field, position) => [field, row[position]]));
+      return withDefaults(Object.fromEntries(header.map((field, position) => [field, row[position]])));
     });
   }
 
@@ -292,7 +314,7 @@
     requireThat(JSON.stringify(header) === '["department","event"]', '台帳保存用のCSVを選んでください。');
     const events = rows.map(row => {
       requireThat(row.length === 2 && row[0] === department, '自部署で保存した台帳を選んでください。');
-      return JSON.parse(row[1]);
+      return withDefaults(JSON.parse(row[1]));
     });
     buildState(events);
     return events;

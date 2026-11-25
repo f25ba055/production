@@ -8,7 +8,7 @@
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
@@ -18,6 +18,20 @@
   };
   let events = [];
   let state = workflow.buildState(events);
+  // 利用者が入力した項目。CSV取り込みでフォームを作り直すときに引き継ぐ。
+  const edited = new Set();
+
+  // 部数は読み上げで桁を間違えないよう、画面では3桁ごとに区切って表示する（CSVは元の数値のまま）。
+  const quantityFields = ['quantity', 'goodQuantity', 'shortageQuantity'];
+
+  function formatCount(value) {
+    const number = Number(value);
+    return value === '' || value === undefined || !Number.isFinite(number) ? value : number.toLocaleString('ja-JP');
+  }
+
+  function copies(value) {
+    return formatCount(value) + '部';
+  }
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -56,13 +70,21 @@
       number.toString(36).padStart(7, '0')).join('');
   }
 
+  // 当初分が完了した注文は、承認済みで未完了の追加製造がある場合だけ進捗を送れる。
+  function acceptsProgress(order) {
+    return !order.initialFinished || [...state.requests.values()].some(request =>
+      request.orderId === order.id && request.type === 'additional' &&
+      request.answer === '承認' && !request.finished);
+  }
+
   function orderChoices(type) {
     const orders = [...state.orders.values()];
     if (type === 'reply') {
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
-    return orders.filter(workflow.availableOrder);
+    const available = orders.filter(workflow.availableOrder);
+    return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
 
   function requestChoices(type, order) {
@@ -71,7 +93,7 @@
       .filter(request => type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
+        (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') + request.requestId]);
   }
 
   function proofChoices(order) {
@@ -118,6 +140,7 @@
     const order = state.orders.get(selectedOrder);
     const formFields = $('fields');
     formFields.replaceChildren();
+    edited.clear();
 
     for (const field of definition.fields) {
       if (automaticField(type, field)) continue;
@@ -134,8 +157,40 @@
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
+      type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+  }
+
+  function captureInput() {
+    const form = new FormData($('entry'));
+    return {
+      orderId: form.get('orderId') || '',
+      values: [...edited].filter(name => name !== 'orderId').map(name => [name, form.get(name) || ''])
+    };
+  }
+
+  // 引き継げなかった内容を利用者に知らせる文を返す。
+  function restoreInput({ orderId, values }) {
+    if (!orderId && !values.length) return '';
+    if (orderId && !orderChoices($('operation').value).some(order => order.id === orderId)) {
+      return '入力中だった注文（' + orderId + '）は対象外になったため、入力内容を引き継げませんでした。';
+    }
+    renderForm(orderId);
+    const lost = [];
+    for (const [name, value] of values) {
+      const input = $('fields').querySelector('[name="' + name + '"]');
+      if (!input) continue;
+      input.value = value;
+      if (input.value === value) {
+        edited.add(name);
+      } else {
+        input.value = '';
+        lost.push(fields[name][0]);
+      }
+    }
+    return '入力中の内容は引き継ぎました。' +
+      (lost.length ? '次の項目は選べなくなったため選び直してください：' + lost.join('、') : '');
   }
 
   function download(name, text) {
@@ -171,6 +226,25 @@
     tableBody.append(row);
   }
 
+  // 朝の段取りで先に拾う注文の判定。キャンセル済み・当初分完了の注文は対象外。
+  function isOpen(order) {
+    return !order.cancelled && !order.initialFinished;
+  }
+
+  function isDueToday(order, today) {
+    return isOpen(order) && order.dueDate === today;
+  }
+
+  // 製造承認済みで、進捗通知をまだ出していない注文を「未着手」とする。
+  function isNotStarted(order) {
+    return isOpen(order) && order.approved && !order.progress;
+  }
+
+  // 特急 → 今日納期 → 未着手 の順に上へ並べる。
+  function priorityOf(order, today) {
+    return (order.rush ? 0 : 4) + (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -178,12 +252,30 @@
       state.requests.get(order.originalRequestId).answer !== '却下');
     for (const order of orders.reverse()) {
       const row = element('tr');
-      const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
+      const dueToday = isDueToday(order, today);
+      if (dueToday) row.className = 'due-today';
+      const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
-        order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
-      row.append(...values.map(value => element('td', value)));
+        order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
+      const cells = values.map(value => element('td', value));
+      if (order.rush) row.classList.add('rush');
+      const tags = [];
+      if (order.rush) tags.push(['特急', 'tag tag-rush']);
+      if (dueToday) tags.push(['今日納期', 'tag tag-due']);
+      if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
+      if (tags.length) {
+        const holder = element('div');
+        for (const [label, className] of tags) {
+          const tag = element('span', label);
+          tag.className = className;
+          holder.append(tag);
+        }
+        cells[0].prepend(holder);
+      }
+      row.append(...cells);
       list.append(row);
     }
+    $('order-count').textContent = list.children.length + '件';
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
     $('order-count').textContent = orders.length + '件';
   }
@@ -218,7 +310,8 @@
       detail.append(element('summary', '内容を見る'));
       const metadata = element('dl');
       for (const field of definition.fields) {
-        metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
+        metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd',
+          (quantityFields.includes(field) ? formatCount(event[field]) : event[field]) || '—'));
       }
       detail.append(metadata);
       const detailCell = element('td');
@@ -245,11 +338,15 @@
     renderOrders();
     renderRejected();
     renderHistory();
+    renderCancelled();
     renderForm();
   }
 
+  $('cancel-search').addEventListener('input', renderCancelled);
+
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
+  $('fields').addEventListener('input', event => edited.add(event.target.name));
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
@@ -279,9 +376,11 @@
     try {
       const text = await file.text();
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
+      const draft = captureInput();
       events = result.events;
       refresh();
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
+      const notice = restoreInput(draft);
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice);
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
     } finally {

@@ -51,6 +51,19 @@ td:first-child, td:last-child { min-width: 5rem; }
 .empty { text-align: center; padding: 1rem; color: #486062; }
 .count { margin-left: .6rem; color: #486062; font-size: .9rem; font-weight: normal; }
 summary { cursor: pointer; }
+.filter { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.2rem; margin: 0 0 .7rem; padding: .5rem .8rem; border: 1px solid var(--line); border-radius: 4px; }
+.filter legend { padding: 0 .3rem; font-weight: 600; font-size: .9rem; }
+.filter .hint { flex-basis: 100%; margin: 0; }
+label.check { display: inline-flex; align-items: center; gap: .35rem; }
+label.check input { width: auto; }
+label.check .count { margin-left: 0; }
+input[type="checkbox"]:focus-visible { outline: 3px solid #c16c11; outline-offset: 2px; }
+.tag { display: inline-block; margin: 0 .3rem .2rem 0; padding: 0 .4rem; border-radius: 3px; font-size: .8rem; font-weight: 600; white-space: nowrap; }
+.tag-due { background: #fff0ea; color: #8f2618; border: 1px solid #e3b3a6; }
+.tag-new { background: var(--accent-light); color: var(--accent-dark); border: 1px solid var(--line); }
+.tag-rush { background: #b3261e; color: white; border: 1px solid #b3261e; }
+tr.due-today td { background: #fff8f4; }
+tr.rush td:first-child { box-shadow: inset 4px 0 0 #b3261e; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
 #csv-types { columns: 2; }
