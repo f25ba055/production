@@ -18,6 +18,8 @@
   };
   let events = [];
   let state = workflow.buildState(events);
+  // 利用者が入力した項目。CSV取り込みでフォームを作り直すときに引き継ぐ。
+  const edited = new Set();
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -118,6 +120,7 @@
     const order = state.orders.get(selectedOrder);
     const formFields = $('fields');
     formFields.replaceChildren();
+    edited.clear();
 
     for (const field of definition.fields) {
       if (automaticField(type, field)) continue;
@@ -136,6 +139,37 @@
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+  }
+
+  function captureInput() {
+    const form = new FormData($('entry'));
+    return {
+      orderId: form.get('orderId') || '',
+      values: [...edited].filter(name => name !== 'orderId').map(name => [name, form.get(name) || ''])
+    };
+  }
+
+  // 引き継げなかった内容を利用者に知らせる文を返す。
+  function restoreInput({ orderId, values }) {
+    if (!orderId && !values.length) return '';
+    if (orderId && !orderChoices($('operation').value).some(order => order.id === orderId)) {
+      return '入力中だった注文（' + orderId + '）は対象外になったため、入力内容を引き継げませんでした。';
+    }
+    renderForm(orderId);
+    const lost = [];
+    for (const [name, value] of values) {
+      const input = $('fields').querySelector('[name="' + name + '"]');
+      if (!input) continue;
+      input.value = value;
+      if (input.value === value) {
+        edited.add(name);
+      } else {
+        input.value = '';
+        lost.push(fields[name][0]);
+      }
+    }
+    return '入力中の内容は引き継ぎました。' +
+      (lost.length ? '次の項目は選べなくなったため選び直してください：' + lost.join('、') : '');
   }
 
   function download(name, text) {
@@ -228,6 +262,7 @@
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
+  $('fields').addEventListener('input', event => edited.add(event.target.name));
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
@@ -257,9 +292,11 @@
     try {
       const text = await file.text();
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
+      const draft = captureInput();
       events = result.events;
       refresh();
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
+      const notice = restoreInput(draft);
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice);
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
     } finally {
