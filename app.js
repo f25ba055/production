@@ -204,6 +204,16 @@
     return input;
   }
 
+  // 今どの操作をしているか分かるよう、登録ボタンの名前を操作の種類に合わせる。
+  const actionLabels = {
+    reply: '依頼回答を送る',
+    proof: '校正確認を送る',
+    progress: '製造進捗を通知する',
+    delay: '納期遅延を通知する',
+    finish: '製造完了を報告する',
+    paperMemo: '用紙メモを残す'
+  };
+
   // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
   // 完了報告では部数の入力途中で取り違えに気づくことがあるので、消える前に確認する。
   let formSnapshot = '';
@@ -257,7 +267,10 @@
       definition.internal ? '製造部だけのメモです。台帳には残りますが、営業部へ渡すCSVは書き出しません。' :
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
-    $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+    const button = $('save-event');
+    button.textContent = actionLabels[type] || '登録してCSVを書き出す';
+    button.title = definition.internal ? '台帳に記録します（CSVは書き出しません）' : '台帳に登録し、営業部へ渡すCSVを書き出します';
+    button.disabled = type !== 'order' && orderChoices(type).length === 0;
     formSnapshot = enteredValues();
   }
 
