@@ -9,7 +9,8 @@
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
     proofFile: ['校正PDFのファイル名'], confirmedFile: ['営業部が確認したファイル名'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']],
+    receiveMethod: ['受取方法', ['店頭受取', '配送']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], reasonCode: ['却下理由の分類', workflow.reasonCodes], confirmedDueDate: ['確定納期', 'date'],
@@ -197,7 +198,8 @@
         '指定なし（今の部数 ' + copies(order.quantity) + '）']
     ];
     if (isChange) rows.push(['用紙', request.paper + '（今の用紙 ' + order.paper + '）']);
-    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定']);
+    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定'],
+      ['受取方法', request.receiveMethod || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
     holder.append(element('h3', '回答する依頼の内容'));
     const newer = newerChange(request);
@@ -875,12 +877,14 @@
     // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
     const wantPaper = updatePaperChoices(filter.elements.paper, all);
     const wantAssignee = updateAssigneeChoices(filter.elements.assignee, all);
+    const wantReceive = filter.elements.receiveMethod.value;
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
       .filter(order => !filter.elements.proofWaiting.checked || isProofWaiting(order))
       .filter(order => !wantPaper || order.paper === wantPaper)
+      .filter(order => !wantReceive || order.receiveMethod === wantReceive)
       .filter(order => !wantAssignee || order.assignee === (wantAssignee === '-' ? '' : wantAssignee))
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
@@ -930,6 +934,9 @@
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
       if (order.initialFinished && hasPendingAdditional(order)) tags.push(['追加分作業あり', 'tag tag-additional']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
+      // 梱包担当が見られるよう、営業部が指定した受取方法を目印で出す（P-042）。
+      if (order.receiveMethod === '配送') tags.push(['配送', 'tag tag-ship']);
+      if (order.receiveMethod === '店頭受取') tags.push(['店頭受取', 'tag tag-pickup']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
       if (isProofOverdue(order, today)) tags.push(['校正期限切れ', 'tag tag-due']);
       if (tags.length) {
@@ -1345,6 +1352,7 @@
     if (item.paper) parts.push(item.paper);
     if (item.quantity) parts.push(copies(item.quantity));
     if (item.dueDate) parts.push('希望納期 ' + item.dueDate);
+    if (item.receiveMethod && item.receiveMethod !== '未設定') parts.push(item.receiveMethod);
     if (item.deliveryDate) parts.push('第' + item.deliveryNo + '回 ' + item.deliveryDate);
     if (item.proofDecision) parts.push('校正' + item.proofDecision);
     return parts.join(' · ');
@@ -1461,6 +1469,7 @@
       ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
+    if (filter.elements.receiveMethod.value) conditions.push('受取方法「' + filter.elements.receiveMethod.value + '」');
     const assignee = filter.elements.assignee.value;
     if (assignee) conditions.push(assignee === '-' ? '担当者 未割当' : '担当者「' + assignee + '」');
     const idQuery = filter.elements.idSearch.value.trim();

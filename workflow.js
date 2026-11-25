@@ -3,7 +3,7 @@
 
   // 両部署の取り込み・書き出しで共通のCSV仕様。
   const interfaces = {
-    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush channel' },
+    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush channel receiveMethod' },
     change:      { name: '注文変更依頼', from: 'sales', fields: 'requestId orderId paper quantity dueDate reason' },
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment confirmedFile' },
@@ -34,7 +34,7 @@
   // 列は必ず末尾に足していくので、旧形式の見出しは今の見出しの先頭部分と一致する。
   // 足りない末尾の列がすべて既定値を持っていれば、旧形式として受け付ける。
   const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '',
-    correctsEventId: '' };
+    correctsEventId: '', receiveMethod: '未設定' };
 
   function isLegacyHeader(header, expected) {
     return header.length < expected.length && header.length > 2 &&
@@ -44,6 +44,8 @@
   const reasonCodes = ['資材不足', '希望納期不可', '設備都合', '仕様不可', 'その他'];
   const rushValues = ['通常', '特急'];
   const channelValues = ['店頭', '電話', 'メール', '未設定'];
+  // 受取方法（P-042）。営業部が指定する。列がない旧形式は「未設定」。
+  const receiveMethods = ['店頭受取', '配送', '未設定'];
 
   function withDefaults(event) {
     const filled = { ...event };
@@ -110,6 +112,7 @@
     if (event.type === 'order') {
       requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
       requireThat(channelValues.includes(event.channel), '受付経路は「店頭」「電話」「メール」のいずれかで入力してください。');
+      requireThat(receiveMethods.includes(event.receiveMethod), '受取方法は「店頭受取」か「配送」で入力してください。');
     }
     if (event.type === 'proofReply') {
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
@@ -157,7 +160,7 @@
       state.orders.set(event.orderId, {
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
-        channel: event.channel || '未設定',
+        channel: event.channel || '未設定', receiveMethod: event.receiveMethod || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
         expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: ''
       });
