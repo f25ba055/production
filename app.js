@@ -340,6 +340,11 @@
     return isOpen(order) && order.approved && !order.progress;
   }
 
+  // 校正確認依頼を出して、お客様（営業部経由）の校正回答を待っている注文。工程を進められない。
+  function isProofWaiting(order) {
+    return isOpen(order) && order.proofStatus.startsWith('回答待ち');
+  }
+
   // 特急 → 今日納期 → 未着手 の順に上へ並べる。
   function priorityOf(order, today) {
     return (order.rush ? 0 : 4) + (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
@@ -403,6 +408,7 @@
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
+      .filter(order => !filter.elements.proofWaiting.checked || isProofWaiting(order))
       .filter(order => !wantPaper || order.paper === wantPaper)
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
@@ -433,6 +439,7 @@
       if (dueToday) tags.push(['今日納期', 'tag tag-due']);
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
+      if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
       if (tags.length) {
         const holder = element('div');
         for (const [label, className] of tags) {
@@ -454,6 +461,7 @@
     $('not-started-count').textContent = '（' + all.filter(isNotStarted).length + '件）';
     $('rush-count').textContent = '（' + all.filter(order => order.rush).length + '件）';
     $('done-count').textContent = '（' + doneCount + '件）';
+    $('proof-waiting-count').textContent = '（' + all.filter(isProofWaiting).length + '件）';
   }
 
   function renderRejected() {
@@ -713,6 +721,7 @@
   function printConditions() {
     const filter = $('order-filter');
     const conditions = [['dueToday', '今日納期'], ['notStarted', '未着手'], ['rush', '特急だけ'],
+      ['proofWaiting', '校正待ちだけ'],
       ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
