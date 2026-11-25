@@ -55,6 +55,13 @@
 
     <section aria-labelledby="orders-title">
       <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+      <fieldset id="order-filter" class="filter">
+        <legend>先に拾う注文で絞り込む</legend>
+        <label class="check"><input type="checkbox" name="dueToday"> 今日納期 <span id="due-today-count" class="count"></span></label>
+        <label class="check"><input type="checkbox" name="notStarted"> 未着手 <span id="not-started-count" class="count"></span></label>
+        <label class="check"><input type="checkbox" name="rush"> 特急だけ <span id="rush-count" class="count"></span></label>
+        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを表示します。すべて外すと全件を表示します。特急・今日納期・未着手の注文は常に一覧の上に並びます。</p>
+      </fieldset>
       <div class="table-wrap">
         <table aria-labelledby="orders-title">
           <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
