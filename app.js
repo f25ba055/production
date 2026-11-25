@@ -429,6 +429,27 @@
     return isOpen(order) && order.proofStatus.startsWith('回答待ち');
   }
 
+  // 日付（YYYY-MM-DD）どうしの日数差。
+  function daysBetween(from, to) {
+    return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
+  }
+
+  // 校正確認の回答期限を過ぎても返答がない注文（P-027）。一覧の先頭に出す。
+  function isProofOverdue(order, today) {
+    return isProofWaiting(order) && Boolean(order.proofDueDate) && order.proofDueDate < today;
+  }
+
+  // 校正の欄に出す文。返答待ちのときは何日待っているかと回答期限を添える。
+  function proofText(order, today) {
+    const state = proofState(order);
+    if (!isProofWaiting(order)) return state;
+    const waited = order.proofSentAt ? daysBetween(order.proofSentAt, today) : null;
+    const days = waited === null ? '' : waited <= 0 ? ' 当日' : ' ' + waited + '日目';
+    const due = order.proofDueDate ? '（期限 ' + order.proofDueDate +
+      (order.proofDueDate < today ? '・' + daysBetween(order.proofDueDate, today) + '日超過' : '') + '）' : '';
+    return state + days + due;
+  }
+
   // 特急 → 今日納期 → 未着手 の順に上へ並べる。
   function priorityOf(order, today) {
     return (order.rush ? 0 : 4) + (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
@@ -521,6 +542,10 @@
     if (filter.elements.sort.value === 'product') {
       shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
     }
+    // 校正の回答期限が過ぎた注文は、どの並び順でも先頭に出す（P-027）。
+    // 期限切れどうしは、期限を長く過ぎているもの（期限が古いもの）を上にする。
+    shown.sort((a, b) => Number(isProofOverdue(b, today)) - Number(isProofOverdue(a, today)) ||
+      (isProofOverdue(a, today) ? a.proofDueDate.localeCompare(b.proofDueDate) : 0));
 
     const productCounts = new Map();
     for (const order of all) productCounts.set(order.product, (productCounts.get(order.product) || 0) + 1);
@@ -531,7 +556,7 @@
       if (dueToday) row.className = 'due-today';
       if (isDone(order)) row.classList.add('done');
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
-        statusOf(order), proofState(order), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
+        statusOf(order), proofText(order, today), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
         order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
@@ -544,6 +569,7 @@
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
+      if (isProofOverdue(order, today)) tags.push(['校正期限切れ', 'tag tag-due']);
       if (tags.length) {
         const holder = element('div');
         for (const [label, className] of tags) {
@@ -689,7 +715,7 @@
   function sendReceipts(requests) {
     const receivedAt = new Date().toISOString();
     const items = requests.map(request => ({ eventId: identifier('EV'), type: 'receipt',
-      requestId: request.requestId, orderId: request.orderId, receivedAt }));
+      requestId: request.requestId, orderId: request.orderId, receivedAt, createdAt: localDate() }));
     try {
       events = workflow.mergeEvents(events, items).events;
       const draft = captureInput();
@@ -800,6 +826,8 @@
     if (type === 'proof') item.proofId = identifier('PRF');
     if (type === 'progress') item.updatedAt = new Date().toISOString();
     if (type === 'receipt') item.receivedAt = new Date().toISOString();
+    // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
+    item.createdAt = localDate();
 
     try {
       events = workflow.mergeEvents(events, [item]).events;
