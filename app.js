@@ -20,6 +20,8 @@
   let state = workflow.buildState(events);
   // 利用者が入力した項目。CSV取り込みでフォームを作り直すときに引き継ぐ。
   const edited = new Set();
+  // 直前のCSV取り込みで新しく登録された注文ID（P-016）。
+  let importedOrderIds = new Set();
 
   // 部数は読み上げで桁を間違えないよう、画面では3桁ごとに区切って表示する（CSVは元の数値のまま）。
   const quantityFields = ['quantity', 'goodQuantity', 'shortageQuantity'];
@@ -370,6 +372,7 @@
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
       if (dueToday) tags.push(['今日納期', 'tag tag-due']);
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
+      if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
       if (tags.length) {
         const holder = element('div');
         for (const [label, className] of tags) {
@@ -591,8 +594,10 @@
       const incoming = workflow.readExchange(text, department).map(item => ({ ...item, importedAt }));
       const result = workflow.mergeEvents(events, incoming);
       const draft = captureInput();
+      const knownOrders = new Set(state.orders.keys());
       events = result.events;
       refresh();
+      showImportedOrders(file.name, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
       const notice = restoreInput(draft);
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice);
     } catch (error) {
@@ -601,6 +606,38 @@
       input.disabled = false;
       input.value = '';
     }
+  });
+
+  // 複数件の製造依頼CSVを取り込んだあと、どの注文が新規だったかを一覧で見せる。
+  // 注文一覧でも「今回新規」の目印を付ける（次の取り込みか「閉じる」まで）。
+  function showImportedOrders(fileName, orders, skipped) {
+    const panel = $('import-result');
+    const list = $('import-result-list');
+    list.replaceChildren();
+    importedOrderIds = new Set(orders.map(order => order.id));
+    panel.hidden = !orders.length;
+    if (!orders.length) {
+      renderOrders();
+      return;
+    }
+    for (const order of orders) {
+      const row = element('tr');
+      row.append(...[order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
+        order.rush ? '特急' : '通常'].map(value => element('td', value)));
+      if (order.rush) row.classList.add('rush');
+      list.append(row);
+    }
+    $('import-result-count').textContent = orders.length + '件';
+    $('import-result-note').textContent = fileName + ' で新しく登録された注文です。' +
+      (skipped ? '取り込み済みだった ' + skipped + ' 件は含みません。' : '') +
+      '注文一覧では「今回新規」の目印が付きます。';
+    renderOrders();
+  }
+
+  $('close-import-result').addEventListener('click', () => {
+    $('import-result').hidden = true;
+    importedOrderIds = new Set();
+    renderOrders();
   });
 
   // 会議用の印刷。今の絞り込みのまま注文一覧だけを印刷し、何で絞った一覧かを上に書いておく。
