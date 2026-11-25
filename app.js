@@ -303,6 +303,18 @@
     }
   }
 
+  // 用紙の選択肢を一覧にある用紙で作り直し、選択中の用紙を返す（一覧から消えた用紙は選択を外す）。
+  function updatePaperChoices(input, orders) {
+    const current = input.value;
+    const counts = new Map();
+    for (const order of orders) counts.set(order.paper, (counts.get(order.paper) || 0) + 1);
+    const papers = [...counts.keys()].sort((a, b) => a.localeCompare(b, 'ja'));
+    input.replaceChildren(option('', 'すべて'),
+      ...papers.map(paper => option(paper, paper + '（' + counts.get(paper) + '件）')));
+    input.value = papers.includes(current) ? current : '';
+    return input.value;
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -314,10 +326,13 @@
     // バーコードを使わずに探せるよう、注文IDの一部（末尾数文字など）で部分一致させる。
     const idQuery = filter.elements.idSearch.value.trim().toLowerCase();
     const all = [...state.orders.values()].filter(isListed).reverse();
+    // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
+    const wantPaper = updatePaperChoices(filter.elements.paper, all);
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
+      .filter(order => !wantPaper || order.paper === wantPaper)
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
@@ -553,6 +568,7 @@
     const filter = $('order-filter');
     const conditions = [['dueToday', '今日納期'], ['notStarted', '未着手'], ['rush', '特急だけ']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
+    if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
     const idQuery = filter.elements.idSearch.value.trim();
     if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
     return conditions.length ? conditions.join('・') : 'なし（全件）';
