@@ -925,6 +925,37 @@
     return holder;
   }
 
+  // 注文カード（P-050）。作業台に置けるよう、用紙・部数・納期・注文IDを大きく1枚にまとめて印刷する。
+  function printOrderCard(order) {
+    const card = $('order-card');
+    card.replaceChildren();
+    const head = element('div');
+    head.className = 'card-head';
+    head.append(element('span', '注文カード'));
+    const id = element('div', order.id);
+    id.className = 'card-id';
+    const product = element('div', order.product);
+    product.className = 'card-product';
+    const list = element('dl');
+    const rows = [['用紙', order.paper], ['部数', copies(order.quantity)], ['納期', order.dueDate + (order.rush ? '（特急）' : '')]];
+    if (order.receiveMethod && order.receiveMethod !== '未設定') rows.push(['受取', order.receiveMethod]);
+    if (order.assignee) rows.push(['担当', order.assignee]);
+    for (const [label, value] of rows) list.append(element('dt', label), element('dd', value));
+    const foot = element('div', '印刷 ' + formatDateTime(new Date().toISOString()));
+    foot.className = 'card-foot';
+    card.append(head, id, product, list, foot);
+    if (order.rush) card.prepend(Object.assign(element('div', '特急'), { className: 'card-rush' }));
+    card.hidden = false;
+    document.body.classList.add('printing-card');
+    window.print();
+  }
+
+  window.addEventListener('afterprint', () => {
+    if (!document.body.classList.contains('printing-card')) return;
+    document.body.classList.remove('printing-card');
+    $('order-card').hidden = true;
+  });
+
   // 担当者の選択肢（登録済みの担当者と「未割当」）を作り直し、選択中の値を返す（P-025）。
   function updateAssigneeChoices(input, orders) {
     const current = input.value;
@@ -1062,9 +1093,14 @@
         }
         cells[0].prepend(holder);
       }
+      const cardButton = element('button', '注文カード');
+      cardButton.type = 'button';
+      cardButton.className = 'secondary card-button no-print';
+      cardButton.title = '作業台に置く注文カード（用紙・部数・納期・注文ID）を印刷します';
+      cardButton.addEventListener('click', () => printOrderCard(order));
       const assignee = element('div', '担当：' + (order.assignee || '未割当'));
       assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
-      cells[0].append(assignee);
+      cells[0].append(assignee, cardButton);
       // 班の交代時の申し送り（P-044）。最新の1件を出し、件数が多いときは工程の経緯で全部見られる。
       const handover = order.handovers.at(-1);
       if (handover) {

@@ -197,3 +197,19 @@ dd { margin: 0; white-space: pre-wrap; }
   tr { break-inside: avoid; }
   .clamp-text { max-width: none; white-space: normal; }
 }
+
+/* 注文カード（P-050）。「注文カード」ボタンで印刷するときだけ、ほかを隠してカードだけを出す。 */
+.card-button { display: block; margin-top: .3rem; padding: .1rem .45rem; font-size: .75rem; }
+.order-card { position: relative; width: 148mm; min-height: 100mm; padding: 6mm 8mm; border: 2px solid #193033; border-radius: 3mm; background: white; color: #193033; }
+.order-card .card-head { display: flex; justify-content: space-between; font-size: 10pt; color: #486062; }
+.order-card .card-id { margin: 2mm 0 1mm; font-size: 26pt; font-weight: 700; letter-spacing: .02em; overflow-wrap: anywhere; }
+.order-card .card-product { font-size: 16pt; font-weight: 600; margin-bottom: 3mm; }
+.order-card dl { grid-template-columns: max-content 1fr; gap: 1.5mm 5mm; font-size: 15pt; }
+.order-card dt { font-weight: 600; color: #486062; }
+.order-card dd { font-weight: 700; white-space: normal; overflow-wrap: anywhere; }
+.order-card .card-foot { position: absolute; bottom: 4mm; right: 8mm; font-size: 9pt; color: #486062; }
+.order-card .card-rush { position: absolute; top: 5mm; right: 8mm; padding: 1mm 4mm; border-radius: 2mm; background: #b3261e; color: white; font-size: 16pt; font-weight: 700; }
+@media print {
+  body.printing-card > header, body.printing-card > main { display: none !important; }
+  body.printing-card .order-card { display: block !important; margin: 0; }
+}
