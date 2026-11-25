@@ -195,7 +195,9 @@
       tag.title = '同じ品名の注文がほかにもあります。注文IDと用紙で確認してください。';
       cell.append(' ', tag);
     }
-    const detail = element('div', order.id + ' · ' + order.paper);
+    const detail = element('div', order.id + ' · ' +
+      (order.paper.length > longTextLength ? order.paper.slice(0, longTextLength) + '…' : order.paper));
+    detail.title = order.id + ' · ' + order.paper;
     detail.className = 'sub';
     cell.append(detail);
     // 問い合わせ対応で営業に聞き直さなくて済むよう、受付経路（店頭・電話・メール）を出す（P-011）。
@@ -233,7 +235,32 @@
   }
 
   // 用紙の欄に、製造部内メモの仮手配・入庫の最新の日付を添える。
+  // 長い用紙名は省略して表の幅を保ち、「全文」ボタンを押したときだけ全文を出す（P-034）。
+  const longTextLength = 12;
+
+  function clampedText(text) {
+    if (text.length <= longTextLength) return document.createTextNode(text);
+    const holder = element('span');
+    holder.className = 'clamp';
+    const body = element('span', text);
+    body.className = 'clamp-text';
+    body.title = text;
+    const button = element('button', '全文');
+    button.type = 'button';
+    button.className = 'clamp-toggle no-print';
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-label', '用紙名の全文を表示');
+    button.addEventListener('click', () => {
+      const open = holder.classList.toggle('open');
+      button.textContent = open ? '閉じる' : '全文';
+      button.setAttribute('aria-expanded', String(open));
+    });
+    holder.append(body, button);
+    return holder;
+  }
+
   function paperCell(cell, order) {
+    cell.replaceChildren(clampedText(order.paper));
     for (const status of ['仮手配', '入庫']) {
       const memo = order.paperMemos.filter(item => item.status === status).at(-1);
       if (!memo) continue;
