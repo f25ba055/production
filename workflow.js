@@ -17,7 +17,7 @@
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
     // 訂正版（P-038）は correctsEventId に元の報告のイベントIDを入れる。元の報告の部数を置き換える（足さない）。
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo correctsEventId' },
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo correctsEventId spareQuantity' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
     paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
     assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' },
@@ -36,7 +36,8 @@
   // 列は必ず末尾に足していくので、旧形式の見出しは今の見出しの先頭部分と一致する。
   // 足りない末尾の列がすべて既定値を持っていれば、旧形式として受け付ける。
   const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '',
-    correctsEventId: '', receiveMethod: '未設定', printedQuantity: '', extraCost: '' };
+    correctsEventId: '', receiveMethod: '未設定', printedQuantity: '', extraCost: '',
+    spareQuantity: '' };
 
   function isLegacyHeader(header, expected) {
     return header.length < expected.length && header.length > 2 &&
@@ -62,7 +63,7 @@
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
   const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo', 'proofFile',
-    'confirmedFile', 'correctsEventId', 'printedQuantity', 'extraCost'];
+    'confirmedFile', 'correctsEventId', 'printedQuantity', 'extraCost', 'spareQuantity'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
@@ -134,6 +135,11 @@
         requireThat(isProofFileName(event[field]),
           '校正PDFのファイル名が不正です（「.pdf」で終わる100文字以内の名前にし、\\ / : * ? " < > | は使えません）。');
       }
+    }
+    // 予備部数（P-051）。注文どおりの良品数とは別に営業部へ渡す余分の部数。良品＋不足の合計には含めない。
+    if (event.type === 'finish') {
+      requireThat(event.spareQuantity === '' || (/^\d+$/.test(event.spareQuantity) && Number.isSafeInteger(Number(event.spareQuantity))),
+        '予備部数は0以上の整数で入力してください。');
     }
     if (event.type === 'handover') {
       requireThat(event.handoverNote.length <= 500, '申し送りは500文字以内で入力してください。');
@@ -363,10 +369,18 @@
 
   // 製造完了報告の記録。訂正版（P-038）で元の報告を探し、二重に足さないために使う。
   function recordFinish(state, event) {
+    const spare = Number(event.spareQuantity || 0);
     state.finishes.set(event.eventId, { eventId: event.eventId, orderId: event.orderId, requestId: event.requestId,
-      deliveryNo: event.deliveryNo || '', goodQuantity: Number(event.goodQuantity),
+      deliveryNo: event.deliveryNo || '', goodQuantity: Number(event.goodQuantity), spareQuantity: spare,
       shortageQuantity: Number(event.shortageQuantity), completedDate: event.completedDate,
       correctsEventId: event.correctsEventId || '', supersededBy: '' });
+    // 予備部数は報告ごとに足す。訂正版では元の報告の予備部数を差し引いてから足す（二重に足さない）。
+    const order = state.orders.get(event.orderId);
+    const request = state.requests.get(event.requestId);
+    const original = event.correctsEventId ? state.finishes.get(event.correctsEventId) : null;
+    const diff = spare - (original ? original.spareQuantity : 0);
+    order.spareQuantity = (order.spareQuantity || 0) + diff;
+    if (request) request.spareQuantity = (request.spareQuantity || 0) + diff;
   }
 
   // 完成数の訂正版（P-038）。元の報告の良品・不足部数を訂正版の値に置き換える（差分だけを反映する）。
