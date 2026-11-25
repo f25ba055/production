@@ -1274,7 +1274,16 @@
     const list = $('pending');
     list.replaceChildren();
     const pending = [...state.requests.values()].filter(request => !request.answer);
-    for (const request of pending) {
+    // 発注（製造依頼）と追加製造などを見分けられるよう、依頼の種類で絞り込む（P-052）。
+    const typeSelect = $('pending-type');
+    const wanted = typeSelect.value;
+    const types = ['order', 'change', 'cancel', 'additional'];
+    typeSelect.replaceChildren(option('', 'すべて（' + pending.length + '件）'),
+      ...types.map(type => option(type, workflow.interfaces[type].name + '（' +
+        pending.filter(request => request.type === type).length + '件）')));
+    typeSelect.value = wanted;
+    const shown = pending.filter(request => !wanted || request.type === wanted);
+    for (const request of shown) {
       const order = state.orders.get(request.orderId);
       const row = element('tr');
       const typeCell = element('td', workflow.interfaces[request.type].name);
@@ -1314,8 +1323,11 @@
         receiptCell, actionCell);
       list.append(row);
     }
-    if (!list.children.length) rowMessage(list, 6, '未回答の依頼はありません。');
-    $('pending-count').textContent = pending.length + '件';
+    if (!list.children.length) {
+      rowMessage(list, 6, pending.length ? 'この種類の未回答の依頼はありません。' : '未回答の依頼はありません。');
+    }
+    $('pending-count').textContent = shown.length === pending.length ? pending.length + '件' :
+      shown.length + '件 ／ 全' + pending.length + '件';
     const unnotified = pending.filter(request => !request.receivedAt).length;
     $('notify-all').disabled = !unnotified;
     $('notify-all').textContent = unnotified ? '未通知の ' + unnotified + ' 件をまとめて受信通知' : '受信通知はすべて送信済み';
@@ -1428,6 +1440,7 @@
   }
 
   $('cancel-search').addEventListener('input', renderCancelled);
+  $('pending-type').addEventListener('change', renderPending);
   $('notify-all').addEventListener('click', () =>
     sendReceipts([...state.requests.values()].filter(request => !request.answer && !request.receivedAt)));
   $('history-filter').addEventListener('change', renderHistory);

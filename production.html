@@ -92,6 +92,9 @@
         <button id="notify-all" type="button" class="secondary">未通知の依頼をまとめて受信通知</button>
       </div>
       <p class="hint">営業部から届き、まだ「依頼回答」を出していない依頼だけを届いた順に並べます。「回答する」を押すと、上の入力欄に依頼回答の準備をします。「受信を通知」を押すと、正式な回答の前に「受信済み」を営業部へ知らせるCSV（受信通知）を書き出します。</p>
+      <label class="inline-select pending-filter">依頼の種類
+        <select id="pending-type"><option value="">すべて</option></select>
+      </label>
       <div class="table-wrap">
         <table aria-labelledby="pending-title">
           <thead><tr><th scope="col">種類</th><th scope="col">注文</th><th scope="col">依頼の内容</th><th scope="col">依頼ID</th><th scope="col">受信通知</th><th scope="col">回答</th></tr></thead>
