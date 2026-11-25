@@ -289,6 +289,13 @@
     return !order.cancelled && state.requests.get(order.originalRequestId).answer !== '却下';
   }
 
+  // 完了報告を出し終えた注文。当初分が完了し、回答待ち・承認済みで未完了の追加製造依頼が残っていないもの。
+  function isDone(order) {
+    return order.initialFinished && ![...state.requests.values()].some(request =>
+      request.orderId === order.id && request.type === 'additional' &&
+      (!request.answer || (request.answer === '承認' && !request.finished)));
+  }
+
   // 毎朝の班長報告用。製造中（キャンセル・当初分完了を除く）の注文を最新の進捗の工程で数える。
   function renderStageCounts() {
     const holder = $('stage-counts');
@@ -325,7 +332,10 @@
     const wantRush = filter.elements.rush.checked;
     // バーコードを使わずに探せるよう、注文IDの一部（末尾数文字など）で部分一致させる。
     const idQuery = filter.elements.idSearch.value.trim().toLowerCase();
-    const all = [...state.orders.values()].filter(isListed).reverse();
+    // 完了報告済みの案件は通常の作業一覧から外し、「完了報告済みも表示」のときだけ出す。
+    const listed = [...state.orders.values()].filter(isListed).reverse();
+    const doneCount = listed.filter(isDone).length;
+    const all = filter.elements.showDone.checked ? listed : listed.filter(order => !isDone(order));
     // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
     const wantPaper = updatePaperChoices(filter.elements.paper, all);
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
@@ -349,6 +359,7 @@
       const row = element('tr');
       const dueToday = isDueToday(order, today);
       if (dueToday) row.className = 'due-today';
+      if (isDone(order)) row.classList.add('done');
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
@@ -379,6 +390,7 @@
     $('due-today-count').textContent = '（' + all.filter(order => isDueToday(order, today)).length + '件）';
     $('not-started-count').textContent = '（' + all.filter(isNotStarted).length + '件）';
     $('rush-count').textContent = '（' + all.filter(order => order.rush).length + '件）';
+    $('done-count').textContent = '（' + doneCount + '件）';
   }
 
   function renderRejected() {
@@ -594,7 +606,8 @@
   // 会議用の印刷。今の絞り込みのまま注文一覧だけを印刷し、何で絞った一覧かを上に書いておく。
   function printConditions() {
     const filter = $('order-filter');
-    const conditions = [['dueToday', '今日納期'], ['notStarted', '未着手'], ['rush', '特急だけ']]
+    const conditions = [['dueToday', '今日納期'], ['notStarted', '未着手'], ['rush', '特急だけ'],
+      ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
     const idQuery = filter.elements.idSearch.value.trim();
