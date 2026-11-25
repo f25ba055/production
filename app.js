@@ -1207,6 +1207,46 @@
     }
   });
 
+  // CSVは読み込んだらすぐ取り込まず、先頭数件の品名と件数を見せて確認してから取り込む（P-037）。
+  // 間違えた取引先・種類のCSVに取り込み前に気づけるようにする。
+  const previewRows = 5;
+  let pendingImport = null;
+
+  function previewLabel(item) {
+    const order = state.orders.get(item.orderId);
+    const product = item.product || (order ? order.product : '（未登録の注文）');
+    const parts = [product, item.orderId];
+    if (item.paper) parts.push(item.paper);
+    if (item.quantity) parts.push(copies(item.quantity));
+    if (item.dueDate) parts.push('希望納期 ' + item.dueDate);
+    if (item.deliveryDate) parts.push('第' + item.deliveryNo + '回 ' + item.deliveryDate);
+    if (item.proofDecision) parts.push('校正' + item.proofDecision);
+    return parts.join(' · ');
+  }
+
+  function showImportPreview(fileName, incoming) {
+    const known = new Set(events.map(event => event.eventId));
+    const fresh = incoming.filter(item => !known.has(item.eventId));
+    const definition = workflow.interfaces[incoming[0].type];
+    $('import-preview-summary').textContent = fileName + '：' + definition.name + ' ' + incoming.length + '件' +
+      (incoming.length !== fresh.length ? '（うち取り込み済み ' + (incoming.length - fresh.length) + '件）' : '') +
+      '。内容を確かめてから取り込んでください。';
+    const list = $('import-preview-list');
+    list.replaceChildren(...incoming.slice(0, previewRows).map(item => {
+      const line = element('li', previewLabel(item));
+      if (known.has(item.eventId)) line.append(' ', Object.assign(element('span', '取り込み済み'), { className: 'tag tag-new' }));
+      return line;
+    }));
+    $('import-preview-more').textContent = incoming.length > previewRows ? 'ほか ' + (incoming.length - previewRows) + '件' : '';
+    $('import-preview').hidden = false;
+    $('import-confirm').focus();
+  }
+
+  function closeImportPreview() {
+    pendingImport = null;
+    $('import-preview').hidden = true;
+  }
+
   $('incoming').addEventListener('change', async event => {
     const input = event.target;
     const file = input.files[0];
@@ -1216,21 +1256,42 @@
       const text = await file.text();
       const importedAt = localDate();
       const incoming = workflow.readExchange(text, department).map(item => ({ ...item, importedAt }));
-      const result = workflow.mergeEvents(events, incoming);
-      const draft = captureInput();
-      const knownOrders = new Set(state.orders.keys());
-      events = result.events;
-      refresh();
-      showImportedOrders(file.name, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
-      const notice = restoreInput(draft);
-      const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice +
-        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
+      pendingImport = { fileName: file.name, incoming };
+      showImportPreview(file.name, incoming);
+      show(file.name + ' の内容を表示しました。よければ「取り込む」を押してください。');
     } catch (error) {
+      closeImportPreview();
       show('取り込みを中止しました。' + error.message, true);
     } finally {
       input.disabled = false;
       input.value = '';
+    }
+  });
+
+  $('import-cancel').addEventListener('click', () => {
+    const name = pendingImport && pendingImport.fileName;
+    closeImportPreview();
+    show((name ? name + ' の' : '') + '取り込みをやめました。');
+  });
+
+  $('import-confirm').addEventListener('click', () => {
+    if (!pendingImport) return;
+    const { fileName, incoming } = pendingImport;
+    try {
+      const result = workflow.mergeEvents(events, incoming);
+      const draft = captureInput();
+      const knownOrders = new Set(state.orders.keys());
+      events = result.events;
+      closeImportPreview();
+      refresh();
+      showImportedOrders(fileName, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
+      const notice = restoreInput(draft);
+      const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
+      show(fileName + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice +
+        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
+    } catch (error) {
+      closeImportPreview();
+      show('取り込みを中止しました。' + error.message, true);
     }
   });
 

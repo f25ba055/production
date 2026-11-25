@@ -43,6 +43,16 @@
           <label>取り込むファイル
             <input id="incoming" type="file" accept=".csv,text/csv">
           </label>
+          <div id="import-preview" class="import-preview" role="region" aria-labelledby="import-preview-title" hidden>
+            <h3 id="import-preview-title">取り込む前の確認</h3>
+            <p id="import-preview-summary"></p>
+            <ol id="import-preview-list"></ol>
+            <p id="import-preview-more" class="hint"></p>
+            <div class="preview-actions">
+              <button id="import-confirm" type="button">取り込む</button>
+              <button id="import-cancel" type="button" class="secondary">やめる</button>
+            </div>
+          </div>
         </section>
         <section aria-labelledby="backup-title">
           <h2 id="backup-title">作業の保存・再開</h2>
