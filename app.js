@@ -268,6 +268,39 @@
     label.append(button);
   }
 
+  // 不足部数の入れ忘れを防ぐため、良品部数を入れると対象依頼の部数から不足部数を計算する（P-030）。
+  // 計算した値は手で直すこともできる。良品部数が対象の部数を超えたときは注意を出す。
+  function autoShortage() {
+    if ($('operation').value !== 'finish') return;
+    const form = $('fields');
+    const good = form.querySelector('[name="goodQuantity"]');
+    const shortage = form.querySelector('[name="shortageQuantity"]');
+    const note = $('shortage-note');
+    const request = state.requests.get(form.querySelector('[name="requestId"]')?.value);
+    if (!good || !shortage || !note) return;
+    note.className = 'field-note';
+    if (!request) {
+      note.textContent = good.value ? '対象依頼を選ぶと、不足部数を自動で計算します。' : '';
+      return;
+    }
+    const target = request.targetQuantity;
+    if (!/^\d+$/.test(good.value)) {
+      shortage.value = '';
+      note.textContent = '良品部数を入れると、対象依頼の部数（' + copies(target) + '）から自動で計算します。';
+      return;
+    }
+    const count = Number(good.value);
+    if (count > target) {
+      shortage.value = '';
+      note.className = 'field-warning';
+      note.textContent = '良品部数が対象依頼の部数（' + copies(target) + '）を超えています。';
+      return;
+    }
+    shortage.value = String(target - count);
+    edited.add('shortageQuantity');
+    note.textContent = copies(target) + ' − 良品 ' + copies(count) + ' で自動計算しました（直すこともできます）。';
+  }
+
   // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
   function isOldCompletedDate(value) {
     return Boolean(value) && value < daysBefore(localDate(), 1);
@@ -310,6 +343,13 @@
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
       if (field === 'instruction') widenable(label, input);
+      if (field === 'shortageQuantity' && type === 'finish') {
+        const note = element('span');
+        note.id = 'shortage-note';
+        note.className = 'field-note';
+        note.setAttribute('role', 'status');
+        label.append(note);
+      }
       if (field === 'completedDate') {
         const warning = element('span');
         warning.id = 'completed-date-warning';
@@ -320,6 +360,7 @@
       }
       formFields.append(label);
     }
+    if (type === 'finish') autoShortage();
     if (type === 'reply') {
       const detail = element('div');
       detail.id = 'request-detail';
@@ -844,7 +885,13 @@
   $('order-filter').addEventListener('input', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
   $('fields').addEventListener('change', event => {
-    if (event.target.name === 'requestId') renderRequestDetail();
+    if (event.target.name === 'requestId') {
+      renderRequestDetail();
+      autoShortage();
+    }
+  });
+  $('fields').addEventListener('input', event => {
+    if (event.target.name === 'goodQuantity') autoShortage();
   });
 
   $('entry').addEventListener('submit', event => {
