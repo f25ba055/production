@@ -12,7 +12,9 @@
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
+    // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
+    paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
@@ -37,10 +39,11 @@
 
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
-  const optionalFields = ['comment', 'confirmedDueDate', 'reason'];
+  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note'];
+  const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
-  const dateFields = ['dueDate', 'confirmedDueDate', 'responseDueDate', 'expectedDate', 'completedDate'];
+  const dateFields = ['dueDate', 'confirmedDueDate', 'responseDueDate', 'expectedDate', 'completedDate', 'memoDate'];
 
   function requireThat(condition, message) {
     if (!condition) throw new Error(message);
@@ -83,6 +86,9 @@
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
       requireThat(event.proofDecision !== '修正依頼' || event.comment.trim(), '修正内容を入力してください。');
     }
+    if (event.type === 'paperMemo') {
+      requireThat(paperStatuses.includes(event.paperStatus), '用紙の状況は「仮手配」か「入庫」で入力してください。');
+    }
     if (event.type === 'progress') {
       requireThat(stages.includes(event.stage), '工程が不正です。');
       requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.updatedAt) &&
@@ -106,7 +112,7 @@
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', paperMemos: []
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -144,6 +150,13 @@
       request.answer = event.decision;
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
       request.answerReason = event.reason;
+      return;
+    }
+
+    // 用紙の仮手配は製造承認の前に行うこともあるため、キャンセル済みでなければ記録できる。
+    if (event.type === 'paperMemo') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文にはメモを残せません。');
+      order.paperMemos.push({ status: event.paperStatus, date: event.memoDate, note: event.note });
       return;
     }
 
@@ -286,6 +299,7 @@
   }
 
   function exportExchange(type, events) {
+    requireThat(!interfaces[type].internal, '製造部内の記録は相手部署へ書き出せません。');
     return encodeCsv([['eventId', 'type', ...interfaces[type].fields], ...events.map(eventValues)]);
   }
 
@@ -294,7 +308,8 @@
     requireThat(rows.length, 'CSVにデータ行がありません。');
     const type = rows[0][1];
     const definition = Object.hasOwn(interfaces, type) && interfaces[type];
-    requireThat(definition && definition.from !== receivingDepartment, '相手部署から受信する種類のCSVを選んでください。');
+    requireThat(definition && !definition.internal && definition.from !== receivingDepartment,
+      '相手部署から受信する種類のCSVを選んでください。');
     const expected = ['eventId', 'type', ...definition.fields];
     const legacy = legacyFields[type] && ['eventId', 'type', ...legacyFields[type]];
     requireThat(JSON.stringify(header) === JSON.stringify(expected) ||

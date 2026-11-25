@@ -14,7 +14,8 @@
     decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
-    shortageQuantity: ['不足部数', 'number']
+    shortageQuantity: ['不足部数', 'number'],
+    paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
   let state = workflow.buildState(events);
@@ -85,6 +86,8 @@
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
+    // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
+    if (type === 'paperMemo') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
     return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
@@ -121,6 +124,18 @@
     cell.append(detail);
   }
 
+  // 用紙の欄に、製造部内メモの仮手配・入庫の最新の日付を添える。
+  function paperCell(cell, order) {
+    for (const status of ['仮手配', '入庫']) {
+      const memo = order.paperMemos.filter(item => item.status === status).at(-1);
+      if (!memo) continue;
+      const line = element('div', status + ' ' + memo.date + (memo.note ? '（' + memo.note + '）' : ''));
+      line.className = 'sub paper-memo';
+      line.title = '製造部内メモ（営業部には送りません）';
+      cell.append(line);
+    }
+  }
+
   function automaticField(type, field) {
     return field === 'updatedAt' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
@@ -143,7 +158,7 @@
       input.min = ['goodQuantity', 'shortageQuantity'].includes(field) ? '0' : '1';
       input.step = '1';
     }
-    if (field === 'completedDate') input.value = localDate();
+    if (field === 'completedDate' || field === 'memoDate') input.value = localDate();
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
@@ -178,7 +193,7 @@
       if (automaticField(type, field)) continue;
       const label = element('label');
       const input = inputFor(type, field, order);
-      input.required = !['comment', 'confirmedDueDate'].includes(field) &&
+      input.required = !['comment', 'confirmedDueDate', 'note'].includes(field) &&
         !(field === 'reason' && type === 'reply');
       if (field === 'orderId' && selectedOrder) input.value = selectedOrder;
       if (field === 'orderId') input.addEventListener('change', () => {
@@ -197,6 +212,7 @@
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
+      definition.internal ? '製造部だけのメモです。台帳には残りますが、営業部へ渡すCSVは書き出しません。' :
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
@@ -367,6 +383,7 @@
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
+      paperCell(cells[2], order);
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
@@ -516,7 +533,7 @@
       const detailCell = element('td');
       detailCell.append(detail);
       const actionCell = element('td');
-      if (sent) {
+      if (sent && !definition.internal) {
         const button = element('button', 'CSVを書き出す');
         button.type = 'button';
         button.className = 'secondary';
@@ -525,7 +542,7 @@
       } else {
         actionCell.textContent = '—';
       }
-      row.append(element('td', sent ? '送信側' : '受信側'), element('td', definition.name),
+      row.append(element('td', definition.internal ? '部内メモ' : sent ? '送信側' : '受信側'), element('td', definition.name),
         element('td', event.orderId), element('td', event.importedAt || '—'), detailCell, actionCell);
       list.append(row);
     }
@@ -576,6 +593,11 @@
     try {
       events = workflow.mergeEvents(events, [item]).events;
       refresh();
+      // 製造部内メモは台帳に残すだけで、営業部へ渡すCSVは書き出さない。
+      if (workflow.interfaces[type].internal) {
+        show(workflow.interfaces[type].name + 'を残しました。営業部へのCSVは書き出していません。台帳の保存を忘れずに行ってください。');
+        return;
+      }
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
     } catch (error) {
@@ -690,7 +712,8 @@
 
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
-    const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
+    const item = element('li', (definition.internal ? '部内のみ（CSVなし）' :
+      definition.from === department ? '書き出し' : '取り込み') + ' · ' +
       definition.name + '（' + type + '）');
     guidance.append(item);
   }
