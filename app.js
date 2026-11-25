@@ -235,6 +235,30 @@
     return type === 'finish' && enteredValues() !== formSnapshot;
   }
 
+  // 長い確認事項を現場で読んでもらえるよう、校正確認依頼の確認事項の欄は横いっぱいにし、
+  // ボタンで縦にも大きく広げられるようにする。広げた状態は入力欄を作り直しても保つ。
+  let instructionExpanded = false;
+
+  function widenable(label, textarea) {
+    label.classList.add('wide');
+    textarea.rows = 5;
+    const button = element('button');
+    button.type = 'button';
+    button.className = 'secondary widen';
+    const apply = () => {
+      textarea.classList.toggle('expanded', instructionExpanded);
+      button.textContent = instructionExpanded ? '入力欄を元の大きさに戻す' : '入力欄を広げる';
+      button.setAttribute('aria-pressed', String(instructionExpanded));
+    };
+    button.addEventListener('click', () => {
+      instructionExpanded = !instructionExpanded;
+      apply();
+      textarea.focus();
+    });
+    apply();
+    label.append(button);
+  }
+
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
     const definition = workflow.interfaces[type];
@@ -263,6 +287,7 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
+      if (field === 'instruction') widenable(label, input);
       formFields.append(label);
     }
     if (type === 'reply') {
