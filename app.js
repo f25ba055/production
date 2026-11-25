@@ -1118,7 +1118,11 @@
 
   $('mark-checked').addEventListener('click', markChecked);
 
-  $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
+  // よく行う「製造進捗通知」を選択肢の先頭に置き、初期選択にする（P-036）。
+  const firstOperation = 'progress';
+  $('operation').append(...[...outgoing].sort(([a], [b]) => Number(b === firstOperation) - Number(a === firstOperation))
+    .map(([type, definition]) => option(type, definition.name)));
+  $('operation').value = firstOperation;
   $('operation').addEventListener('change', () => renderForm());
   $('order-filter').addEventListener('change', renderOrders);
   $('order-filter').addEventListener('input', renderOrders);
