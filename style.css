@@ -66,6 +66,8 @@ tr.due-today td { background: #fff8f4; }
 tr.rush td:first-child { box-shadow: inset 4px 0 0 #b3261e; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
+.unanswered { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.unanswered p { margin: 0; font-weight: 600; }
 #csv-types { columns: 2; }
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
