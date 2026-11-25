@@ -6,14 +6,14 @@
     order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush channel' },
     change:      { name: '注文変更依頼', from: 'sales', fields: 'requestId orderId paper quantity dueDate reason' },
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
-    proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
+    proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment confirmedFile' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     // 分納（P-026）。製造依頼・追加製造依頼を、回（deliveryNo）ごとの納品日と部数に分ける。1回につき1行。
     split:       { name: '分納指示', from: 'sales', fields: 'orderId requestId deliveryNo deliveryDate quantity' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode' },
     // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
     receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
-    proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
+    proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate proofFile' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
     finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo' },
@@ -29,15 +29,16 @@
   // 受付経路（channel, P-011）の列がない旧形式は「未設定」として読む。
   // 却下理由の分類（reasonCode, P-022）の列がない旧形式の依頼回答は、分類なし（空）として読む。
   // 分納の回（deliveryNo, P-026）の列がない旧形式の製造完了報告は、分納なし（空）として読む。
-  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '' };
-  const legacyFields = {
-    order: [
-      interfaces.order.fields.filter(field => field !== 'channel'),
-      interfaces.order.fields.filter(field => field !== 'rush' && field !== 'channel')
-    ],
-    reply: [interfaces.reply.fields.filter(field => field !== 'reasonCode')],
-    finish: [interfaces.finish.fields.filter(field => field !== 'deliveryNo')]
-  };
+  // 校正PDFのファイル名（proofFile / confirmedFile, P-031）の列がない旧形式は、ファイル名なし（空）として読む。
+  // 列は必ず末尾に足していくので、旧形式の見出しは今の見出しの先頭部分と一致する。
+  // 足りない末尾の列がすべて既定値を持っていれば、旧形式として受け付ける。
+  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '' };
+
+  function isLegacyHeader(header, expected) {
+    return header.length < expected.length && header.length > 2 &&
+      header.every((field, index) => field === expected[index]) &&
+      expected.slice(header.length).every(field => Object.hasOwn(fieldDefaults, field));
+  }
   const reasonCodes = ['資材不足', '希望納期不可', '設備都合', '仕様不可', 'その他'];
   const rushValues = ['通常', '特急'];
   const channelValues = ['店頭', '電話', 'メール', '未設定'];
@@ -54,12 +55,17 @@
 
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
-  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo'];
+  const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo', 'proofFile',
+    'confirmedFile'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
   const dateFields = ['dueDate', 'confirmedDueDate', 'responseDueDate', 'expectedDate', 'completedDate', 'memoDate',
     'deliveryDate'];
+
+  function isProofFileName(name) {
+    return name.length <= 100 && /\.pdf$/i.test(name) && !/[\\/:*?"<>|]/.test(name) && name.trim() === name;
+  }
 
   function requireThat(condition, message) {
     if (!condition) throw new Error(message);
@@ -110,6 +116,12 @@
     if (event.type === 'split' || (event.type === 'finish' && event.deliveryNo)) {
       requireThat(/^\d+$/.test(event.deliveryNo) && Number(event.deliveryNo) >= 1 && Number(event.deliveryNo) <= 99,
         '分納の回は1〜99の整数で入力してください。');
+    }
+    for (const field of ['proofFile', 'confirmedFile']) {
+      if (event[field]) {
+        requireThat(isProofFileName(event[field]),
+          '校正PDFのファイル名が不正です（「.pdf」で終わる100文字以内の名前にし、\\ / : * ? " < > | は使えません）。');
+      }
     }
     if (event.type === 'assign') {
       requireThat(event.assignee.trim().length <= 30, '担当者名は30文字以内で入力してください。');
@@ -230,7 +242,8 @@
       case 'proof': {
         requireThat(!proof, '校正IDが重複しています。');
         const previous = [...state.proofs.values()].filter(item => item.orderId === order.id).at(-1);
-        requireThat(!previous || (previous.answer === '修正依頼' && Number(event.version) > Number(previous.version)),
+        requireThat(!previous || (['修正依頼', '要再確認'].includes(previous.answer) &&
+          Number(event.version) > Number(previous.version)),
           '前の校正に修正依頼があり、版番号が上がっていることを確認してください。');
         state.proofs.set(event.proofId, { ...event, answer: '' });
         order.proofStatus = '回答待ち（第' + event.version + '版）';
@@ -239,6 +252,7 @@
         // 返答待ち日数の起点。createdAt は製造部の台帳にだけ残す記録（CSVには含めない）。
         order.proofSentAt = event.createdAt || '';
         order.proofDueDate = event.responseDueDate;
+        order.proofFile = event.proofFile || '';
         break;
       }
       case 'proofReply':
@@ -248,6 +262,13 @@
         order.proofStatus = event.proofDecision + '（第' + proof.version + '版）';
         // 修正依頼の理由（複数行のこともある, P-039）。次の版を送るまで一覧に出す。
         order.proofComment = event.proofDecision === '修正依頼' ? event.comment : '';
+        // 版の取り違え防止（P-031）。営業部が確認したファイル名が送ったファイル名と違えば、承認として扱わず要再確認にする。
+        if (event.confirmedFile && proof.proofFile && event.confirmedFile !== proof.proofFile) {
+          proof.answer = '要再確認';
+          order.proofStatus = '要再確認（ファイル名不一致・第' + proof.version + '版）';
+          order.proofComment = 'お客様が確認したファイル名「' + event.confirmedFile + '」が、送ったファイル名「' +
+            proof.proofFile + '」と違います。版を確かめて、校正確認依頼を送り直してください。';
+        }
         break;
       case 'progress':
         if (!order.progressAt || Date.parse(event.updatedAt) >= Date.parse(order.progressAt)) {
@@ -412,9 +433,8 @@
     requireThat(definition && !definition.internal && definition.from !== receivingDepartment,
       '相手部署から受信する種類のCSVを選んでください。');
     const expected = ['eventId', 'type', ...definition.fields];
-    const legacy = (legacyFields[type] || []).map(fields => JSON.stringify(['eventId', 'type', ...fields]));
-    requireThat(JSON.stringify(header) === JSON.stringify(expected) ||
-      legacy.includes(JSON.stringify(header)), 'CSVの見出しが仕様と一致しません。');
+    requireThat(JSON.stringify(header) === JSON.stringify(expected) || isLegacyHeader(header, expected),
+      'CSVの見出しが仕様と一致しません。');
     return rows.map((row, index) => {
       requireThat(row.length === header.length && row[1] === type, 'データ ' + (index + 1) + ' 件目の列数または種類が不正です。');
       return withDefaults(Object.fromEntries(header.map((field, position) => [field, row[position]])));

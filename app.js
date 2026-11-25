@@ -7,6 +7,7 @@
   const outgoing = Object.entries(workflow.interfaces).filter(([, definition]) => definition.from === department);
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
+    proofFile: ['校正PDFのファイル名'], confirmedFile: ['営業部が確認したファイル名'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
     dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
@@ -337,6 +338,14 @@
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
     }
+    if (field === 'proofFile') {
+      // 版の取り違えを防ぐため、ファイル名に注文IDと版番号を入れる（P-031）。版番号を変えると名前も追従する。
+      input.maxLength = 100;
+      input.pattern = '[^\\\\\\/:*?"<>\\|]+\\.[pP][dD][fF]';
+      input.title = '「.pdf」で終わる名前。\\ / : * ? " < > | は使えません。';
+      input.dataset.auto = 'true';
+      input.addEventListener('input', () => { input.dataset.auto = 'false'; });
+    }
     if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
       input.value = order[field];
     }
@@ -534,6 +543,10 @@
       autoShortage();
     }
     if (type === 'reply') updateReasonCode();
+    if (type === 'proof') {
+      updateProofFileName(order);
+      $('fields').querySelector('[name="version"]').addEventListener('input', () => updateProofFileName(order));
+    }
     if (type === 'proof' && order) {
       // 次の版を作るときに、前の版への修正理由を改行のまま見られるようにする（P-039）。
       const last = [...state.proofs.values()].filter(proof => proof.orderId === order.id).at(-1);
@@ -672,6 +685,14 @@
     const due = order.proofDueDate ? '（期限 ' + order.proofDueDate +
       (order.proofDueDate < today ? '・' + daysBetween(order.proofDueDate, today) + '日超過' : '') + '）' : '';
     return state + days + due;
+  }
+
+  // 校正PDFのファイル名の初期値（P-031）。利用者が書き換えていなければ、注文IDと版番号から作り直す。
+  function updateProofFileName(order) {
+    const input = $('fields').querySelector('[name="proofFile"]');
+    const version = $('fields').querySelector('[name="version"]');
+    if (!input || input.dataset.auto !== 'true') return;
+    input.value = order && version && version.value ? order.id + '_校正_第' + version.value + '版.pdf' : '';
   }
 
   // 校正の修正理由は複数行で返ってくるので、見落とさないよう改行のまま表示する（P-039）。
@@ -835,7 +856,15 @@
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       paperCell(cells[2], order);
       deliveryCell(cells[4], order);
-      if (order.proofComment) cells[6].append(proofCommentBlock(order.proofComment));
+      if (order.proofFile) {
+        const file = element('div', 'PDF：' + order.proofFile);
+        file.className = 'sub proof-file';
+        cells[6].append(file);
+      }
+      if (order.proofComment) {
+        cells[6].append(proofCommentBlock(order.proofComment,
+          order.proofStatus.startsWith('要再確認') ? '要再確認の理由' : '修正理由'));
+      }
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
