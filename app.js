@@ -737,9 +737,22 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
+  // 書き出すCSVのファイル名（P-048）。似た名前のCSVを取り違えないよう、注文ID・通知の種類・品名・日付を入れる。
+  // 例：ORD-xxxx_製造進捗通知_チラシA4_20261125_a1b2c3.csv（末尾はイベントIDの末尾で、同じ日の同じ通知を見分ける）
+  function safeFilePart(text) {
+    return String(text).replace(/[\\/:*?"<>|\s]+/g, '').slice(0, 30);
+  }
+
+  function eventFileName(event) {
+    const order = state.orders.get(event.orderId);
+    const name = workflow.interfaces[event.type].name + (event.correctsEventId ? '（訂正版）' : '');
+    const day = (event.createdAt || event.importedAt || localDate()).replaceAll('-', '');
+    return [event.orderId, name, order ? safeFilePart(order.product) : '', day, event.eventId.slice(-6)]
+      .filter(Boolean).join('_') + '.csv';
+  }
+
   function eventDownload(event) {
-    download(event.type + '-' + event.orderId + '-' + event.eventId + '.csv',
-      workflow.exportExchange(event.type, [event]));
+    download(eventFileName(event), workflow.exportExchange(event.type, [event]));
   }
 
   function statusOf(order) {
@@ -1268,8 +1281,8 @@
       const draft = captureInput();
       refresh();
       restoreInput(draft);
-      download('receipt-' + (items.length === 1 ? items[0].orderId + '-' + items[0].eventId : localDate() + '-' + items.length + '件') + '.csv',
-        workflow.exportExchange('receipt', items));
+      download(items.length === 1 ? eventFileName(items[0]) :
+        '受信通知_' + localDate().replaceAll('-', '') + '_' + items.length + '件.csv', workflow.exportExchange('receipt', items));
       show('受信通知を ' + items.length + ' 件書き出しました。営業部へ渡してください。');
     } catch (error) {
       show(error.message, true);
