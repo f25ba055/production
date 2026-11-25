@@ -16,7 +16,8 @@
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
     finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
-    paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' }
+    paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
+    assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
@@ -94,6 +95,9 @@
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
       requireThat(event.proofDecision !== '修正依頼' || event.comment.trim(), '修正内容を入力してください。');
     }
+    if (event.type === 'assign') {
+      requireThat(event.assignee.trim().length <= 30, '担当者名は30文字以内で入力してください。');
+    }
     if (event.type === 'paperMemo') {
       requireThat(paperStatuses.includes(event.paperStatus), '用紙の状況は「仮手配」か「入庫」で入力してください。');
     }
@@ -125,7 +129,7 @@
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         channel: event.channel || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, paperMemos: []
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, paperMemos: [], assignee: ''
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -174,6 +178,13 @@
     }
 
     // 用紙の仮手配は製造承認の前に行うこともあるため、キャンセル済みでなければ記録できる。
+    // 班長が各注文に担当者を振る（P-025）。最後に登録した担当者を今の担当とする。
+    if (event.type === 'assign') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文には担当者を登録できません。');
+      order.assignee = event.assignee.trim();
+      return;
+    }
+
     if (event.type === 'paperMemo') {
       requireThat(!order.cancelled, 'キャンセル済みの注文にはメモを残せません。');
       order.paperMemos.push({ status: event.paperStatus, date: event.memoDate, note: event.note });

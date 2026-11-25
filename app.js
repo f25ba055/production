@@ -16,6 +16,7 @@
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
     receivedAt: ['受信日時'],
+    assignee: ['担当者'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
@@ -88,7 +89,7 @@
         request.orderId === order.id && !request.answer && (type === 'reply' || !request.receivedAt)));
     }
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
-    if (type === 'paperMemo') return orders.filter(isListed);
+    if (type === 'paperMemo' || type === 'assign') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
     return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
@@ -202,6 +203,13 @@
       input.step = '1';
     }
     if (field === 'completedDate' || field === 'memoDate') input.value = localDate();
+    if (field === 'assignee') {
+      // これまでに登録した担当者から選べるようにする（新しい名前も入力できる）。
+      input.setAttribute('list', 'assignee-names');
+      input.maxLength = 30;
+      input.autocomplete = 'off';
+      if (order) input.value = order.assignee;
+    }
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
@@ -220,7 +228,8 @@
     progress: '製造進捗を通知する',
     delay: '納期遅延を通知する',
     finish: '製造完了を報告する',
-    paperMemo: '用紙メモを残す'
+    paperMemo: '用紙メモを残す',
+    assign: '担当者を登録する'
   };
 
   // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
@@ -463,6 +472,23 @@
     return input.value;
   }
 
+  // 担当者の選択肢（登録済みの担当者と「未割当」）を作り直し、選択中の値を返す（P-025）。
+  function updateAssigneeChoices(input, orders) {
+    const current = input.value;
+    const counts = new Map();
+    for (const order of orders) counts.set(order.assignee, (counts.get(order.assignee) || 0) + 1);
+    const names = [...counts.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ja'));
+    const values = ['', ...names, ...(counts.has('') ? ['-'] : [])];
+    input.replaceChildren(option('', 'すべて'),
+      ...names.map(name => option(name, name + '（' + counts.get(name) + '件）')),
+      ...(counts.has('') ? [option('-', '未割当（' + counts.get('') + '件）')] : []));
+    input.value = values.includes(current) ? current : '';
+    const list = $('assignee-names');
+    list.replaceChildren(...[...new Set([...state.orders.values()].map(order => order.assignee).filter(Boolean))]
+      .map(name => option(name, '')));
+    return input.value;
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -479,12 +505,14 @@
     const all = filter.elements.showDone.checked ? listed : listed.filter(order => !isDone(order));
     // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
     const wantPaper = updatePaperChoices(filter.elements.paper, all);
+    const wantAssignee = updateAssigneeChoices(filter.elements.assignee, all);
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
       .filter(order => !filter.elements.proofWaiting.checked || isProofWaiting(order))
       .filter(order => !wantPaper || order.paper === wantPaper)
+      .filter(order => !wantAssignee || order.assignee === (wantAssignee === '-' ? '' : wantAssignee))
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
         (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
@@ -525,6 +553,9 @@
         }
         cells[0].prepend(holder);
       }
+      const assignee = element('div', '担当：' + (order.assignee || '未割当'));
+      assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
+      cells[0].append(assignee);
       row.append(...cells);
       list.append(row);
     }
@@ -852,6 +883,8 @@
       ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
+    const assignee = filter.elements.assignee.value;
+    if (assignee) conditions.push(assignee === '-' ? '担当者 未割当' : '担当者「' + assignee + '」');
     const idQuery = filter.elements.idSearch.value.trim();
     if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
     return (conditions.length ? conditions.join('・') : 'なし（全件）') +
