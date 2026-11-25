@@ -106,6 +106,14 @@
       </div>
       <p id="print-info" class="print-only"></p>
       <div id="stage-counts" class="stage-counts" aria-label="工程ごとの件数"></div>
+      <details id="kind-totals" class="kind-totals">
+        <summary>品種ごとの受注部数 <span id="kind-totals-summary" class="count"></span></summary>
+        <table aria-label="品種ごとの受注部数">
+          <thead><tr><th scope="col">品種</th><th scope="col">注文数</th><th scope="col">受注部数</th><th scope="col">うち製造中</th></tr></thead>
+          <tbody id="kind-totals-list"></tbody>
+        </table>
+        <p class="hint">キャンセル・却下を除いたすべての注文の部数（変更承認後の部数）を品種ごとに合計します。品種は品名に含まれる「はがき」「チラシ」「名刺」などから判断し、当てはまらない品名はそのまま品種として数えます。</p>
+      </details>
       <fieldset id="order-filter" class="filter">
         <legend>先に拾う注文で絞り込む・並べ替える</legend>
         <label class="check"><input type="checkbox" name="dueToday"> 今日納期 <span id="due-today-count" class="count"></span></label>
@@ -115,6 +123,14 @@
         <label class="check"><input type="checkbox" name="showDone"> 完了報告済みも表示 <span id="done-count" class="count"></span></label>
         <label class="inline-select">用紙
           <select name="paper"><option value="">すべて</option></select>
+        </label>
+        <label class="inline-select">受取方法
+          <select name="receiveMethod">
+            <option value="">すべて</option>
+            <option value="店頭受取">店頭受取</option>
+            <option value="配送">配送</option>
+            <option value="未設定">未設定</option>
+          </select>
         </label>
         <label class="inline-select">担当者
           <select name="assignee"><option value="">すべて</option></select>

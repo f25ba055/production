@@ -7,8 +7,10 @@
   const outgoing = Object.entries(workflow.interfaces).filter(([, definition]) => definition.from === department);
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
+    proofFile: ['校正PDFのファイル名'], confirmedFile: ['営業部が確認したファイル名'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']],
+    receiveMethod: ['受取方法', ['店頭受取', '配送']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], reasonCode: ['却下理由の分類', workflow.reasonCodes], confirmedDueDate: ['確定納期', 'date'],
@@ -17,7 +19,7 @@
     shortageQuantity: ['不足部数', 'number'],
     deliveryNo: ['分納の回'], deliveryDate: ['納品日', 'date'],
     receivedAt: ['受信日時'],
-    assignee: ['担当者'],
+    assignee: ['担当者'], handoverNote: ['申し送り'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
@@ -95,7 +97,7 @@
         request.orderId === order.id && !request.answer && (type === 'reply' || !request.receivedAt)));
     }
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
-    if (type === 'paperMemo' || type === 'assign') return orders.filter(isListed);
+    if (type === 'paperMemo' || type === 'assign' || type === 'handover') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
     return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
@@ -151,6 +153,13 @@
   function updateDeliveryChoices() {
     const input = $('fields').querySelector('[name="deliveryNo"]');
     if (!input) return;
+    if (correctionTarget) {
+      // 訂正版は元の報告と同じ回に固定する（P-038）。
+      input.replaceChildren(correctionTarget.deliveryNo ?
+        option(correctionTarget.deliveryNo, '第' + correctionTarget.deliveryNo + '回（訂正）') : option('', '分納なし'));
+      input.disabled = !correctionTarget.deliveryNo;
+      return;
+    }
     const request = state.requests.get($('fields').querySelector('[name="requestId"]')?.value);
     const deliveries = (request && request.deliveries) || [];
     if (!deliveries.length) {
@@ -189,7 +198,8 @@
         '指定なし（今の部数 ' + copies(order.quantity) + '）']
     ];
     if (isChange) rows.push(['用紙', request.paper + '（今の用紙 ' + order.paper + '）']);
-    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定']);
+    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定'],
+      ['受取方法', request.receiveMethod || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
     holder.append(element('h3', '回答する依頼の内容'));
     const newer = newerChange(request);
@@ -299,7 +309,7 @@
   }
 
   function automaticField(type, field) {
-    return field === 'updatedAt' || field === 'receivedAt' || (type === 'order' && field === 'orderId') ||
+    return field === 'updatedAt' || field === 'receivedAt' || field === 'correctsEventId' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
       (type === 'proof' && field === 'proofId');
   }
@@ -308,6 +318,13 @@
     const [, kind] = fields[field];
     if (field === 'orderId') {
       return select(field, orderChoices(type).map(item => [item.id, orderLabel(item)]));
+    }
+    if (field === 'requestId' && type === 'finish' && correctionTarget) {
+      const request = state.requests.get(correctionTarget.requestId);
+      const input = select(field, [[request.requestId, workflow.interfaces[request.type].name + ' · ' +
+        copies(request.targetQuantity) + ' · ' + request.requestId + '（訂正）']]);
+      input.value = request.requestId;
+      return input;
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
     if (field === 'deliveryNo') {
@@ -318,7 +335,11 @@
     if (field === 'proofId') return select(field, proofChoices(order));
     if (Array.isArray(kind)) return select(field, kind.map(value => [value, value]));
 
-    const input = element(field === 'comment' || field === 'instruction' ? 'textarea' : 'input');
+    const input = element(['comment', 'instruction', 'handoverNote'].includes(field) ? 'textarea' : 'input');
+    if (field === 'handoverNote') {
+      input.maxLength = 500;
+      input.placeholder = '例：用紙の入荷待ち。12/3 午前に入荷予定のため、入荷後に印刷を始めてください。';
+    }
     input.name = field;
     if (input.tagName === 'INPUT') input.type = kind || 'text';
     if (input.type === 'number') {
@@ -337,6 +358,14 @@
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
     }
+    if (field === 'proofFile') {
+      // 版の取り違えを防ぐため、ファイル名に注文IDと版番号を入れる（P-031）。版番号を変えると名前も追従する。
+      input.maxLength = 100;
+      input.pattern = '[^\\\\\\/:*?"<>\\|]+\\.[pP][dD][fF]';
+      input.title = '「.pdf」で終わる名前。\\ / : * ? " < > | は使えません。';
+      input.dataset.auto = 'true';
+      input.addEventListener('input', () => { input.dataset.auto = 'false'; });
+    }
     if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
       input.value = order[field];
     }
@@ -352,7 +381,8 @@
     delay: '納期遅延を通知する',
     finish: '製造完了を報告する',
     paperMemo: '用紙メモを残す',
-    assign: '担当者を登録する'
+    assign: '担当者を登録する',
+    handover: '申し送りを残す'
   };
 
   // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
@@ -442,6 +472,30 @@
     if (!rejecting) code.value = '';
   }
 
+  // 工程の飛ばし・逆戻りの確認（P-043）。準備中→印刷中→加工中→検品中の順で、次の工程以外に進めるときに知らせる。
+  // 進捗通知をまだ出していない注文は、準備中から始まるものとする。
+  function stageJumpWarning(order, stage) {
+    if (!order || !stage) return '';
+    const stages = workflow.stages;
+    const from = order.progress ? stages.indexOf(order.progress) : -1;
+    const to = stages.indexOf(stage);
+    if (to === from) return '';
+    if (to < from) return '工程が「' + order.progress + '」から「' + stage + '」に戻ります。';
+    if (to > from + 1) {
+      return '工程「' + stages.slice(from + 1, to).join('」「') + '」を飛ばして、' +
+        (order.progress ? '「' + order.progress + '」から' : '') + '「' + stage + '」にします。';
+    }
+    return '';
+  }
+
+  function updateStageWarning() {
+    const warning = $('stage-warning');
+    if (!warning) return;
+    const fields = $('fields');
+    warning.textContent = stageJumpWarning(state.orders.get(fields.querySelector('[name="orderId"]')?.value),
+      fields.querySelector('[name="stage"]')?.value);
+  }
+
   // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
   function isOldCompletedDate(value) {
     return Boolean(value) && value < daysBefore(localDate(), 1);
@@ -474,6 +528,39 @@
     $('registrant-names').replaceChildren(...[...names].map(name => option(name, '')));
     label.append(element('span', '登録者（製造部内の記録） *'), input);
     return label;
+  }
+
+  // 完成数の訂正版（P-038）。やり取り履歴の「訂正版を作る」で、訂正する元の製造完了報告を選ぶ。
+  let correctionTarget = null;
+
+  function startCorrection(event) {
+    if (hasUnsavedFinish($('operation').value) &&
+      !confirm('入力中の製造完了報告は消えます。訂正版の作成に切り替えますか？')) return;
+    correctionTarget = event;
+    $('operation').value = 'finish';
+    renderForm(event.orderId);
+    $('entry').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('fields').querySelector('[name="goodQuantity"]').focus({ preventScroll: true });
+    show('製造完了報告（' + event.eventId + '）の訂正版を作ります。正しい部数を入れて「訂正版を報告する」を押してください。');
+  }
+
+  function correctionBanner() {
+    const banner = element('div');
+    banner.className = 'correction-banner wide-block';
+    banner.append(element('strong', '訂正版を作成中'), element('span', '元の報告：' + correctionTarget.completedDate +
+      ' 良品 ' + copies(correctionTarget.goodQuantity) + '・不足 ' + copies(correctionTarget.shortageQuantity) +
+      (correctionTarget.deliveryNo ? '（分納 第' + correctionTarget.deliveryNo + '回）' : '') +
+      '。訂正版は元の報告を置き換えます（良品数は足し算されません）。'));
+    const cancel = element('button', '訂正をやめる');
+    cancel.type = 'button';
+    cancel.className = 'secondary';
+    cancel.addEventListener('click', () => {
+      correctionTarget = null;
+      renderForm();
+      show('訂正をやめました。');
+    });
+    banner.append(cancel);
+    return banner;
   }
 
   function renderForm(selectedOrder = '') {
@@ -519,6 +606,15 @@
         note.setAttribute('role', 'status');
         label.append(note);
       }
+      if (field === 'stage' && type === 'progress') {
+        const warning = element('span');
+        warning.id = 'stage-warning';
+        warning.className = 'field-warning';
+        warning.setAttribute('role', 'status');
+        label.append(warning);
+        input.addEventListener('change', updateStageWarning);
+        if (order && order.progress) label.append(Object.assign(element('span', '今の工程：' + order.progress), { className: 'field-note' }));
+      }
       if (field === 'completedDate') {
         const warning = element('span');
         warning.id = 'completed-date-warning';
@@ -534,6 +630,18 @@
       autoShortage();
     }
     if (type === 'reply') updateReasonCode();
+    if (type !== 'finish' || (correctionTarget && selectedOrder !== correctionTarget.orderId)) correctionTarget = null;
+    if (type === 'finish' && correctionTarget) {
+      formFields.prepend(correctionBanner());
+      const set = (name, value) => { const input = formFields.querySelector('[name="' + name + '"]'); if (input) input.value = value; };
+      set('completedDate', correctionTarget.completedDate);
+      set('goodQuantity', correctionTarget.goodQuantity);
+      set('shortageQuantity', correctionTarget.shortageQuantity);
+    }
+    if (type === 'proof') {
+      updateProofFileName(order);
+      $('fields').querySelector('[name="version"]').addEventListener('input', () => updateProofFileName(order));
+    }
     if (type === 'proof' && order) {
       // 次の版を作るときに、前の版への修正理由を改行のまま見られるようにする（P-039）。
       const last = [...state.proofs.values()].filter(proof => proof.orderId === order.id).at(-1);
@@ -558,7 +666,7 @@
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     const button = $('save-event');
-    button.textContent = actionLabels[type] || '登録してCSVを書き出す';
+    button.textContent = type === 'finish' && correctionTarget ? '訂正版を報告する' : actionLabels[type] || '登録してCSVを書き出す';
     button.title = definition.internal ? '台帳に記録します（CSVは書き出しません）' : '台帳に登録し、営業部へ渡すCSVを書き出します';
     button.disabled = type !== 'order' && orderChoices(type).length === 0;
     formSnapshot = enteredValues();
@@ -674,6 +782,14 @@
     return state + days + due;
   }
 
+  // 校正PDFのファイル名の初期値（P-031）。利用者が書き換えていなければ、注文IDと版番号から作り直す。
+  function updateProofFileName(order) {
+    const input = $('fields').querySelector('[name="proofFile"]');
+    const version = $('fields').querySelector('[name="version"]');
+    if (!input || input.dataset.auto !== 'true') return;
+    input.value = order && version && version.value ? order.id + '_校正_第' + version.value + '版.pdf' : '';
+  }
+
   // 校正の修正理由は複数行で返ってくるので、見落とさないよう改行のまま表示する（P-039）。
   function proofCommentBlock(comment, heading = '修正理由') {
     const block = element('div');
@@ -730,9 +846,11 @@
   // 注文詳細：工程が何度も更新された注文の経緯を、進捗通知の日時順に追えるようにする（P-028）。
   // 最新の状態だけでは分からない「いつ・どの工程に変わったか」を、完了見込み日の変化とあわせて並べる。
   function stageTimeline(order) {
-    const steps = events.filter(event => event.orderId === order.id && event.type === 'progress')
-      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
-    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish');
+    const steps = events.filter(event => event.orderId === order.id && ['progress', 'handover'].includes(event.type))
+      .sort((a, b) => Date.parse(a.updatedAt || a.recordedAt) - Date.parse(b.updatedAt || b.recordedAt));
+    // 訂正された元の報告は除き、訂正版には印を付ける（P-038）。
+    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish' &&
+      !(state.finishes.get(event.eventId) || {}).supersededBy);
     if (!steps.length && !finishes.length) return null;
     const holder = element('details');
     holder.className = 'timeline no-print';
@@ -741,6 +859,14 @@
     let previous = '';
     for (const step of steps) {
       const item = element('li');
+      if (step.type === 'handover') {
+        // 申し送り（P-044）も経緯に並べる。
+        item.className = 'handover-step';
+        item.append(element('time', step.recordedAt ? formatDateTime(step.recordedAt) : step.createdAt || ''), ' ',
+          element('strong', '申し送り'), ' ', Object.assign(element('span', step.handoverNote), { className: 'multiline' }));
+        list.append(item);
+        continue;
+      }
       const time = element('time', formatDateTime(step.updatedAt));
       time.dateTime = step.updatedAt;
       item.append(time, ' ', element('strong', step.stage),
@@ -754,7 +880,8 @@
       const item = element('li');
       item.className = 'finish';
       item.append(element('time', finish.completedDate), ' ',
-        element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '')),
+        element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '') +
+          (finish.correctsEventId ? '（訂正版）' : '')),
         ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
       list.append(item);
     }
@@ -779,6 +906,38 @@
     return input.value;
   }
 
+  // 品種ごとの受注部数（P-045）。品種の項目はないので、品名に含まれる品種名で分け、当てはまらなければ品名で数える。
+  const productKinds = ['はがき', 'ハガキ', 'チラシ', 'フライヤー', '名刺', 'ポスター', 'パンフレット', 'リーフレット',
+    '封筒', '冊子', 'カタログ', 'DM', 'カレンダー', '伝票', 'シール', 'ステッカー', '会員証', 'チケット'];
+  const kindAliases = { 'ハガキ': 'はがき', 'フライヤー': 'チラシ', 'ステッカー': 'シール' };
+
+  function productKind(product) {
+    const kind = productKinds.find(name => product.includes(name));
+    return kind ? kindAliases[kind] || kind : product;
+  }
+
+  function renderKindTotals() {
+    const totals = new Map();
+    for (const order of [...state.orders.values()].filter(isListed)) {
+      const kind = productKind(order.product);
+      const total = totals.get(kind) || { orders: 0, quantity: 0, open: 0 };
+      total.orders += 1;
+      total.quantity += order.quantity;
+      if (!isDone(order)) total.open += order.quantity;
+      totals.set(kind, total);
+    }
+    const rows = [...totals.entries()].sort((a, b) => b[1].quantity - a[1].quantity);
+    $('kind-totals-list').replaceChildren(...rows.map(([kind, total]) => {
+      const row = element('tr');
+      row.append(element('td', kind), element('td', total.orders + '件'), element('td', copies(total.quantity)),
+        element('td', copies(total.open)));
+      return row;
+    }));
+    if (!rows.length) rowMessage($('kind-totals-list'), 4, '注文がありません。');
+    const sum = rows.reduce((value, [, total]) => value + total.quantity, 0);
+    $('kind-totals-summary').textContent = rows.length + '品種・合計 ' + copies(sum);
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -796,12 +955,14 @@
     // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
     const wantPaper = updatePaperChoices(filter.elements.paper, all);
     const wantAssignee = updateAssigneeChoices(filter.elements.assignee, all);
+    const wantReceive = filter.elements.receiveMethod.value;
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
       .filter(order => !filter.elements.proofWaiting.checked || isProofWaiting(order))
       .filter(order => !wantPaper || order.paper === wantPaper)
+      .filter(order => !wantReceive || order.receiveMethod === wantReceive)
       .filter(order => !wantAssignee || order.assignee === (wantAssignee === '-' ? '' : wantAssignee))
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
@@ -835,7 +996,15 @@
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
       paperCell(cells[2], order);
       deliveryCell(cells[4], order);
-      if (order.proofComment) cells[6].append(proofCommentBlock(order.proofComment));
+      if (order.proofFile) {
+        const file = element('div', 'PDF：' + order.proofFile);
+        file.className = 'sub proof-file';
+        cells[6].append(file);
+      }
+      if (order.proofComment) {
+        cells[6].append(proofCommentBlock(order.proofComment,
+          order.proofStatus.startsWith('要再確認') ? '要再確認の理由' : '修正理由'));
+      }
       if (order.rush) row.classList.add('rush');
       const tags = [];
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
@@ -843,6 +1012,9 @@
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
       if (order.initialFinished && hasPendingAdditional(order)) tags.push(['追加分作業あり', 'tag tag-additional']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
+      // 梱包担当が見られるよう、営業部が指定した受取方法を目印で出す（P-042）。
+      if (order.receiveMethod === '配送') tags.push(['配送', 'tag tag-ship']);
+      if (order.receiveMethod === '店頭受取') tags.push(['店頭受取', 'tag tag-pickup']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
       if (isProofOverdue(order, today)) tags.push(['校正期限切れ', 'tag tag-due']);
       if (tags.length) {
@@ -857,6 +1029,16 @@
       const assignee = element('div', '担当：' + (order.assignee || '未割当'));
       assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
       cells[0].append(assignee);
+      // 班の交代時の申し送り（P-044）。最新の1件を出し、件数が多いときは工程の経緯で全部見られる。
+      const handover = order.handovers.at(-1);
+      if (handover) {
+        const note = element('div');
+        note.className = 'handover';
+        note.append(element('strong', '申し送り' + (handover.date ? '（' + handover.date + '）' : '') +
+          (order.handovers.length > 1 ? ' 全' + order.handovers.length + '件' : '')),
+          Object.assign(element('div', handover.note), { className: 'multiline' }));
+        cells[0].append(note);
+      }
       const timeline = stageTimeline(order);
       if (timeline) cells[0].append(timeline);
       row.append(...cells);
@@ -1104,10 +1286,22 @@
         button.className = 'secondary';
         button.addEventListener('click', () => eventDownload(event));
         actionCell.append(button);
+        // 完成数の訂正版（P-038）。まだ訂正されていない報告だけ訂正できる。
+        const finish = event.type === 'finish' && state.finishes.get(event.eventId);
+        if (finish && finish.supersededBy) {
+          actionCell.append(Object.assign(element('div', '訂正済み'), { className: 'sub' }));
+        } else if (finish) {
+          const fix = element('button', '訂正版を作る');
+          fix.type = 'button';
+          fix.className = 'secondary';
+          fix.addEventListener('click', () => startCorrection(finish));
+          actionCell.append(' ', fix);
+        }
       } else {
         actionCell.textContent = '—';
       }
-      row.append(element('td', definition.internal ? '部内メモ' : sent ? '送信側' : '受信側'), element('td', definition.name),
+      row.append(element('td', definition.internal ? '部内メモ' : sent ? '送信側' : '受信側'),
+        element('td', definition.name + (event.correctsEventId ? '（訂正版）' : '')),
         element('td', event.orderId), element('td', event.importedAt || '—'), detailCell, actionCell);
       list.append(row);
     }
@@ -1121,6 +1315,7 @@
   function refresh() {
     state = workflow.buildState(events);
     renderStageCounts();
+    renderKindTotals();
     renderPending();
     renderOrders();
     renderRejected();
@@ -1179,6 +1374,14 @@
       $('fields').querySelector('[name="registeredBy"]').focus();
       return;
     }
+    if (type === 'progress') {
+      const warning = stageJumpWarning(state.orders.get(data.orderId), data.stage);
+      if (warning && !confirm(warning + '\nこのまま製造進捗通知を送りますか？')) {
+        show('製造進捗通知の送信を取りやめました。工程を確認してください。');
+        $('fields').querySelector('[name="stage"]').focus();
+        return;
+      }
+    }
     if (type === 'reply' && data.decision === '承認') {
       const target = state.requests.get(data.requestId);
       const newer = target && newerChange(target);
@@ -1198,7 +1401,7 @@
       $('fields').querySelector('[name="reason"]').focus();
       return;
     }
-    if (type === 'finish' && isOldCompletedDate(data.completedDate) &&
+    if (type === 'finish' && !correctionTarget && isOldCompletedDate(data.completedDate) &&
       !confirm('完成日が ' + data.completedDate + ' になっています（昨日より前の日付です）。\n' +
         'このまま製造完了報告を送りますか？')) {
       show('製造完了報告の送信を取りやめました。完成日を確認してください。');
@@ -1215,6 +1418,8 @@
       lastRegistrant = item.registeredBy;
     }
     if (type === 'receipt') item.receivedAt = new Date().toISOString();
+    if (workflow.interfaces[type].internal) item.recordedAt = new Date().toISOString();
+    if (type === 'finish') item.correctsEventId = correctionTarget ? correctionTarget.eventId : '';
     // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
     item.createdAt = localDate();
 
@@ -1245,6 +1450,7 @@
     if (item.paper) parts.push(item.paper);
     if (item.quantity) parts.push(copies(item.quantity));
     if (item.dueDate) parts.push('希望納期 ' + item.dueDate);
+    if (item.receiveMethod && item.receiveMethod !== '未設定') parts.push(item.receiveMethod);
     if (item.deliveryDate) parts.push('第' + item.deliveryNo + '回 ' + item.deliveryDate);
     if (item.proofDecision) parts.push('校正' + item.proofDecision);
     return parts.join(' · ');
@@ -1361,6 +1567,7 @@
       ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
+    if (filter.elements.receiveMethod.value) conditions.push('受取方法「' + filter.elements.receiveMethod.value + '」');
     const assignee = filter.elements.assignee.value;
     if (assignee) conditions.push(assignee === '-' ? '担当者 未割当' : '担当者「' + assignee + '」');
     const idQuery = filter.elements.idSearch.value.trim();
