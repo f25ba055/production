@@ -497,6 +497,29 @@
     }
   });
 
+  // 会議用の印刷。今の絞り込みのまま注文一覧だけを印刷し、何で絞った一覧かを上に書いておく。
+  function printConditions() {
+    const filter = $('order-filter');
+    const conditions = [['dueToday', '今日納期'], ['notStarted', '未着手'], ['rush', '特急だけ']]
+      .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
+    const idQuery = filter.elements.idSearch.value.trim();
+    if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
+    return conditions.length ? conditions.join('・') : 'なし（全件）';
+  }
+
+  function updatePrintInfo() {
+    const now = new Date();
+    $('print-info').textContent = '印刷日時：' + localDate() + ' ' +
+      String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') +
+      '　絞り込み：' + printConditions() + '　表示件数：' + $('order-count').textContent;
+  }
+
+  window.addEventListener('beforeprint', updatePrintInfo);
+  $('print-orders').addEventListener('click', () => {
+    updatePrintInfo();
+    window.print();
+  });
+
   $('save-backup').addEventListener('click', () => {
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');

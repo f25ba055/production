@@ -75,6 +75,8 @@ tr.rush td:first-child { box-shadow: inset 4px 0 0 #b3261e; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
 #csv-types { columns: 2; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.print-only { display: none; }
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
 }
@@ -82,4 +84,26 @@ dd { margin: 0; white-space: pre-wrap; }
   #fields { grid-template-columns: 1fr; }
   .stage-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #csv-types { columns: 1; }
+}
+
+/* 会議用の印刷レイアウト：入力欄・取り込み・絞り込み・履歴などの操作欄を省き、注文一覧だけを出す。 */
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  :root { background: white; }
+  * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  header { padding: 0 0 .3rem; background: none; color: #193033; border-bottom: 2px solid #193033; }
+  header p { display: none; }
+  h1 { font-size: 1.2rem; }
+  main { max-width: none; padding: .4rem 0 0; display: block; }
+  .guide, .workspace, #message, #order-filter, .no-print { display: none !important; }
+  section { padding: 0; border: 0; }
+  .print-only { display: block; margin: 0 0 .4rem; font-size: .8rem; }
+  .stage-counts { gap: .3rem; margin-bottom: .4rem; }
+  .stage-count { padding: .2rem .5rem; }
+  .stage-count strong { font-size: 1rem; }
+  .table-wrap { overflow: visible; }
+  table { font-size: .75rem; }
+  th, td { padding: .3rem .35rem; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
 }

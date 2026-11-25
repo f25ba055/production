@@ -53,8 +53,12 @@
 
     <p id="message" role="status" aria-live="polite">CSVの処理結果をここに表示します。</p>
 
-    <section aria-labelledby="orders-title">
-      <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+    <section id="orders-section" aria-labelledby="orders-title">
+      <div class="section-head">
+        <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+        <button id="print-orders" type="button" class="secondary no-print">一覧を印刷</button>
+      </div>
+      <p id="print-info" class="print-only"></p>
       <div id="stage-counts" class="stage-counts" aria-label="工程ごとの件数"></div>
       <fieldset id="order-filter" class="filter">
         <legend>先に拾う注文で絞り込む</legend>
@@ -84,7 +88,7 @@
       </div>
     </details>
 
-    <section aria-labelledby="history-title">
+    <section class="no-print" aria-labelledby="history-title">
       <h2 id="history-title">やり取り履歴</h2>
       <div class="table-wrap">
         <table aria-labelledby="history-title">
