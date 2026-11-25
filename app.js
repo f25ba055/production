@@ -191,6 +191,7 @@
     const order = state.orders.get(request.orderId);
     const isChange = request.type === 'change';
     const rows = [
+      ['現行の条件', currentConditionText(order)],
       ['依頼種別', workflow.interfaces[request.type].name],
       ['注文', orderLabel(order)],
       ['希望納期', request.dueDate ? request.dueDate + (isChange ? '（今の納期 ' + order.dueDate + '）' : '') :
@@ -1214,6 +1215,20 @@
     show(workflow.interfaces[request.type].name + '（' + request.requestId + '）への回答を入力してください。');
   }
 
+  // 今の正式な条件（承認済みの用紙・部数・納期, P-049）。変更依頼が複数あっても、どれが今の条件か迷わないようにする。
+  function currentConditionText(order) {
+    if (!order.approved) return '製造依頼の承認前（依頼どおりの条件：' + order.paper + '・' + copies(order.quantity) + '・納期 ' + order.dueDate + '）';
+    return '用紙 ' + order.paper + '・' + copies(order.quantity) + '・納期 ' + order.dueDate +
+      (order.conditionRequestId ? '（' + order.conditionRequestId + ' の変更を承認済み）' : '（製造依頼のとおり承認済み）');
+  }
+
+  function currentConditions(order) {
+    const line = element('div');
+    line.className = 'current-conditions';
+    line.append(element('strong', '現行の条件'), element('span', currentConditionText(order)));
+    return line;
+  }
+
   function renderPending() {
     const list = $('pending');
     list.replaceChildren();
@@ -1238,6 +1253,7 @@
       }
       const orderCell = element('td');
       productCell(orderCell, order, false);
+      orderCell.append(currentConditions(order));
       const button = element('button', '回答する');
       button.type = 'button';
       button.addEventListener('click', () => startReply(request));
