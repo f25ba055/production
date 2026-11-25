@@ -404,6 +404,56 @@
     $('cancelled-count').textContent = approved.length + '件';
   }
 
+  // 承認・却下をまだ出していない依頼だけの一覧。届いた順（古い依頼が上）に並べる。
+  function requestSummary(request) {
+    const parts = [];
+    if (request.paper && request.type !== 'order') parts.push('用紙 ' + request.paper);
+    if (request.quantity) parts.push(copies(request.quantity));
+    if (request.dueDate) parts.push('希望納期 ' + request.dueDate);
+    if (request.reason) parts.push('理由：' + request.reason);
+    return parts.join(' ／ ') || '—';
+  }
+
+  function startReply(request) {
+    if (hasUnsavedFinish($('operation').value) &&
+      !confirm('入力中の製造完了報告は消えます。依頼回答に切り替えますか？')) return;
+    $('operation').value = 'reply';
+    renderForm(request.orderId);
+    const requestInput = $('fields').querySelector('[name="requestId"]');
+    requestInput.value = request.requestId;
+    $('entry').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    ($('fields').querySelector('[name="decision"]') || requestInput).focus({ preventScroll: true });
+    show(workflow.interfaces[request.type].name + '（' + request.requestId + '）への回答を入力してください。');
+  }
+
+  function renderPending() {
+    const list = $('pending');
+    list.replaceChildren();
+    const pending = [...state.requests.values()].filter(request => !request.answer);
+    for (const request of pending) {
+      const order = state.orders.get(request.orderId);
+      const row = element('tr');
+      const typeCell = element('td', workflow.interfaces[request.type].name);
+      if (request.type === 'order' && order.rush) {
+        const tag = element('span', '特急');
+        tag.className = 'tag tag-rush';
+        typeCell.prepend(tag);
+        row.classList.add('rush');
+      }
+      const orderCell = element('td');
+      productCell(orderCell, order, false);
+      const button = element('button', '回答する');
+      button.type = 'button';
+      button.addEventListener('click', () => startReply(request));
+      const actionCell = element('td');
+      actionCell.append(button);
+      row.append(typeCell, orderCell, element('td', requestSummary(request)), element('td', request.requestId), actionCell);
+      list.append(row);
+    }
+    if (!list.children.length) rowMessage(list, 5, '未回答の依頼はありません。');
+    $('pending-count').textContent = pending.length + '件';
+  }
+
   function renderHistory() {
     const list = $('history');
     list.replaceChildren();
@@ -441,6 +491,7 @@
   function refresh() {
     state = workflow.buildState(events);
     renderStageCounts();
+    renderPending();
     renderOrders();
     renderRejected();
     renderHistory();

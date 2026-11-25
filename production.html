@@ -53,6 +53,17 @@
 
     <p id="message" role="status" aria-live="polite">CSVの処理結果をここに表示します。</p>
 
+    <section id="pending-section" class="no-print" aria-labelledby="pending-title">
+      <h2 id="pending-title">未回答の依頼 <span id="pending-count" class="count"></span></h2>
+      <p class="hint">営業部から届き、まだ「依頼回答」を出していない依頼だけを届いた順に並べます。「回答する」を押すと、上の入力欄に依頼回答の準備をします。</p>
+      <div class="table-wrap">
+        <table aria-labelledby="pending-title">
+          <thead><tr><th scope="col">種類</th><th scope="col">注文</th><th scope="col">依頼の内容</th><th scope="col">依頼ID</th><th scope="col">回答</th></tr></thead>
+          <tbody id="pending"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="orders-section" aria-labelledby="orders-title">
       <div class="section-head">
         <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
