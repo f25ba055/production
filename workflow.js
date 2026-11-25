@@ -3,29 +3,37 @@
 
   // 両部署の取り込み・書き出しで共通のCSV仕様。
   const interfaces = {
-    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush' },
+    order:       { name: '製造依頼', from: 'sales', fields: 'requestId orderId product paper quantity dueDate rush channel' },
     change:      { name: '注文変更依頼', from: 'sales', fields: 'requestId orderId paper quantity dueDate reason' },
     cancel:      { name: 'キャンセル依頼', from: 'sales', fields: 'requestId orderId reason' },
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason' },
+    // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
+    receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
     finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
-    paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' }
+    paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
+    assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
   }
 
   // 列を追加する前の形式。旧形式のCSV・台帳も読めるよう、足りない列は既定値で補う。
-  const fieldDefaults = { rush: '通常' };
+  // 受付経路（channel, P-011）の列がない旧形式は「未設定」として読む。
+  const fieldDefaults = { rush: '通常', channel: '未設定' };
   const legacyFields = {
-    order: interfaces.order.fields.filter(field => field !== 'rush')
+    order: [
+      interfaces.order.fields.filter(field => field !== 'channel'),
+      interfaces.order.fields.filter(field => field !== 'rush' && field !== 'channel')
+    ]
   };
   const rushValues = ['通常', '特急'];
+  const channelValues = ['店頭', '電話', 'メール', '未設定'];
 
   function withDefaults(event) {
     const filled = { ...event };
@@ -81,13 +89,21 @@
     }
     if (event.type === 'order') {
       requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
+      requireThat(channelValues.includes(event.channel), '受付経路は「店頭」「電話」「メール」のいずれかで入力してください。');
     }
     if (event.type === 'proofReply') {
       requireThat(['承認', '修正依頼'].includes(event.proofDecision), '校正回答が不正です。');
       requireThat(event.proofDecision !== '修正依頼' || event.comment.trim(), '修正内容を入力してください。');
     }
+    if (event.type === 'assign') {
+      requireThat(event.assignee.trim().length <= 30, '担当者名は30文字以内で入力してください。');
+    }
     if (event.type === 'paperMemo') {
       requireThat(paperStatuses.includes(event.paperStatus), '用紙の状況は「仮手配」か「入庫」で入力してください。');
+    }
+    if (event.type === 'receipt') {
+      requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.receivedAt) &&
+        !isNaN(Date.parse(event.receivedAt)), '受信日時が不正です。');
     }
     if (event.type === 'progress') {
       requireThat(stages.includes(event.stage), '工程が不正です。');
@@ -111,8 +127,9 @@
       state.orders.set(event.orderId, {
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
+        channel: event.channel || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', paperMemos: []
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: ''
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -124,6 +141,13 @@
         requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
       }
       state.requests.set(event.requestId, { ...event, answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
+      return;
+    }
+
+    if (event.type === 'receipt') {
+      requireThat(request && request.orderId === order.id, '該当する依頼がありません。');
+      requireThat(!request.receivedAt, 'この依頼の受信通知はすでに出しています。');
+      request.receivedAt = event.receivedAt;
       return;
     }
 
@@ -154,6 +178,13 @@
     }
 
     // 用紙の仮手配は製造承認の前に行うこともあるため、キャンセル済みでなければ記録できる。
+    // 班長が各注文に担当者を振る（P-025）。最後に登録した担当者を今の担当とする。
+    if (event.type === 'assign') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文には担当者を登録できません。');
+      order.assignee = event.assignee.trim();
+      return;
+    }
+
     if (event.type === 'paperMemo') {
       requireThat(!order.cancelled, 'キャンセル済みの注文にはメモを残せません。');
       order.paperMemos.push({ status: event.paperStatus, date: event.memoDate, note: event.note });
@@ -169,6 +200,10 @@
           '前の校正に修正依頼があり、版番号が上がっていることを確認してください。');
         state.proofs.set(event.proofId, { ...event, answer: '' });
         order.proofStatus = '回答待ち（第' + event.version + '版）';
+        order.proofVersion = Number(event.version);
+        // 返答待ち日数の起点。createdAt は製造部の台帳にだけ残す記録（CSVには含めない）。
+        order.proofSentAt = event.createdAt || '';
+        order.proofDueDate = event.responseDueDate;
         break;
       }
       case 'proofReply':
@@ -315,9 +350,9 @@
     requireThat(definition && !definition.internal && definition.from !== receivingDepartment,
       '相手部署から受信する種類のCSVを選んでください。');
     const expected = ['eventId', 'type', ...definition.fields];
-    const legacy = legacyFields[type] && ['eventId', 'type', ...legacyFields[type]];
+    const legacy = (legacyFields[type] || []).map(fields => JSON.stringify(['eventId', 'type', ...fields]));
     requireThat(JSON.stringify(header) === JSON.stringify(expected) ||
-      (legacy && JSON.stringify(header) === JSON.stringify(legacy)), 'CSVの見出しが仕様と一致しません。');
+      legacy.includes(JSON.stringify(header)), 'CSVの見出しが仕様と一致しません。');
     return rows.map((row, index) => {
       requireThat(row.length === header.length && row[1] === type, 'データ ' + (index + 1) + ' 件目の列数または種類が不正です。');
       return withDefaults(Object.fromEntries(header.map((field, position) => [field, row[position]])));

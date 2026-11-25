@@ -31,6 +31,7 @@
           </label>
           <p id="action-help" class="hint"></p>
           <div id="fields"></div>
+          <datalist id="assignee-names"></datalist>
           <button id="save-event" type="submit">登録してCSVを書き出す</button>
           <p class="hint">ボタンを押すと台帳に登録し、営業部へ渡すCSVを書き出します（用紙メモはCSVを書き出しません）。</p>
         </form>
@@ -74,11 +75,14 @@
     </div>
 
     <section id="pending-section" class="no-print" aria-labelledby="pending-title">
-      <h2 id="pending-title">未回答の依頼 <span id="pending-count" class="count"></span></h2>
-      <p class="hint">営業部から届き、まだ「依頼回答」を出していない依頼だけを届いた順に並べます。「回答する」を押すと、上の入力欄に依頼回答の準備をします。</p>
+      <div class="section-head">
+        <h2 id="pending-title">未回答の依頼 <span id="pending-count" class="count"></span></h2>
+        <button id="notify-all" type="button" class="secondary">未通知の依頼をまとめて受信通知</button>
+      </div>
+      <p class="hint">営業部から届き、まだ「依頼回答」を出していない依頼だけを届いた順に並べます。「回答する」を押すと、上の入力欄に依頼回答の準備をします。「受信を通知」を押すと、正式な回答の前に「受信済み」を営業部へ知らせるCSV（受信通知）を書き出します。</p>
       <div class="table-wrap">
         <table aria-labelledby="pending-title">
-          <thead><tr><th scope="col">種類</th><th scope="col">注文</th><th scope="col">依頼の内容</th><th scope="col">依頼ID</th><th scope="col">回答</th></tr></thead>
+          <thead><tr><th scope="col">種類</th><th scope="col">注文</th><th scope="col">依頼の内容</th><th scope="col">依頼ID</th><th scope="col">受信通知</th><th scope="col">回答</th></tr></thead>
           <tbody id="pending"></tbody>
         </table>
       </div>
@@ -101,20 +105,25 @@
         <label class="inline-select">用紙
           <select name="paper"><option value="">すべて</option></select>
         </label>
+        <label class="inline-select">担当者
+          <select name="assignee"><option value="">すべて</option></select>
+        </label>
         <label class="inline-select">並び順
           <select name="sort">
-            <option value="">優先度順</option>
+            <option value="due" selected>納期順</option>
+            <option value="priority">優先度順</option>
+            <option value="registered">登録順</option>
             <option value="product">品名順</option>
           </select>
         </label>
         <label class="id-search">注文IDで探す
           <input type="search" name="idSearch" placeholder="末尾の数文字でも可（例: 4a2f）" autocomplete="off" spellcheck="false">
         </label>
-        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを、「校正待ちだけ」はお客様の校正回答を待っている注文だけを表示します。「用紙」は選んだ用紙の注文だけに、「注文IDで探す」は入力した文字を含む注文だけに絞ります（大文字・小文字は区別しません）。完了報告を出し終えた注文（未完了の追加製造がないもの）は通常は表示せず、「完了報告済みも表示」を選んだときだけ表示します。すべて外すと作業中の注文を全件表示します。並び順が「優先度順」のときは、特急・今日納期・未着手の注文が一覧の上に並びます。「品名順」では同じ品名の注文がまとまり、同じ品名の中では優先度順に並びます。</p>
+        <p class="hint">今日納期・未着手は両方選ぶとどちらかに当てはまる注文を、「特急だけ」はその中の特急注文だけを、「校正待ちだけ」はお客様の校正回答を待っている注文だけを表示します。「用紙」「担当者」は選んだ用紙・担当者の注文だけに、「注文IDで探す」は入力した文字を含む注文だけに絞ります（大文字・小文字は区別しません）。完了報告を出し終えた注文（未完了の追加製造がないもの）は通常は表示せず、「完了報告済みも表示」を選んだときだけ表示します。すべて外すと作業中の注文を全件表示します。並び順は、最初は「納期順」（納期の近い注文が上。同じ納期の中は特急・今日納期・未着手が上）です。「優先度順」は特急・今日納期・未着手の注文が上、「登録順」は新しく登録した注文が上、「品名順」は同じ品名の注文をまとめて並べます。「登録順」以外では、校正の回答期限を過ぎた注文が先頭に並びます。</p>
       </fieldset>
       <div class="table-wrap">
         <table aria-labelledby="orders-title">
-          <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
+          <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">校正版</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
           <tbody id="orders"></tbody>
         </table>
       </div>

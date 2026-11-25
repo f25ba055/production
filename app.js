@@ -8,13 +8,15 @@
   const fields = {
     orderId: ['注文ID'], requestId: ['依頼ID'], proofId: ['校正ID'],
     product: ['品名'], paper: ['用紙'], quantity: ['部数', 'number'],
-    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], reason: ['理由'], version: ['版番号', 'number'],
+    dueDate: ['希望納期', 'date'], rush: ['特急区分', ['通常', '特急']], channel: ['受付経路', ['店頭', '電話', 'メール']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
     decision: ['依頼回答', ['承認', '却下']], confirmedDueDate: ['確定納期', 'date'],
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
+    receivedAt: ['受信日時'],
+    assignee: ['担当者'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
@@ -87,12 +89,12 @@
 
   function orderChoices(type) {
     const orders = [...state.orders.values()];
-    if (type === 'reply') {
+    if (type === 'reply' || type === 'receipt') {
       return orders.filter(order => [...state.requests.values()].some(request =>
-        request.orderId === order.id && !request.answer));
+        request.orderId === order.id && !request.answer && (type === 'reply' || !request.receivedAt)));
     }
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
-    if (type === 'paperMemo') return orders.filter(isListed);
+    if (type === 'paperMemo' || type === 'assign') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
     return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
@@ -100,7 +102,8 @@
   function requestChoices(type, order) {
     return [...state.requests.values()]
       .filter(request => order && request.orderId === order.id)
-      .filter(request => type === 'reply' ? !request.answer :
+      .filter(request => type === 'receipt' ? !request.answer && !request.receivedAt :
+        type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
         (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') +
@@ -133,7 +136,7 @@
         '指定なし（今の部数 ' + copies(order.quantity) + '）']
     ];
     if (isChange) rows.push(['用紙', request.paper + '（今の用紙 ' + order.paper + '）']);
-    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常']);
+    if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
     holder.append(element('h3', '回答する依頼の内容'));
     const list = element('dl');
@@ -162,6 +165,12 @@
     const detail = element('div', order.id + ' · ' + order.paper);
     detail.className = 'sub';
     cell.append(detail);
+    // 問い合わせ対応で営業に聞き直さなくて済むよう、受付経路（店頭・電話・メール）を出す（P-011）。
+    if (order.channel && order.channel !== '未設定') {
+      const channel = element('div', '受付：' + order.channel);
+      channel.className = 'sub channel';
+      cell.append(channel);
+    }
   }
 
   // 用紙の欄に、製造部内メモの仮手配・入庫の最新の日付を添える。
@@ -177,7 +186,7 @@
   }
 
   function automaticField(type, field) {
-    return field === 'updatedAt' || (type === 'order' && field === 'orderId') ||
+    return field === 'updatedAt' || field === 'receivedAt' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
       (type === 'proof' && field === 'proofId');
   }
@@ -199,6 +208,13 @@
       input.step = '1';
     }
     if (field === 'completedDate' || field === 'memoDate') input.value = localDate();
+    if (field === 'assignee') {
+      // これまでに登録した担当者から選べるようにする（新しい名前も入力できる）。
+      input.setAttribute('list', 'assignee-names');
+      input.maxLength = 30;
+      input.autocomplete = 'off';
+      if (order) input.value = order.assignee;
+    }
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
@@ -212,11 +228,13 @@
   // 今どの操作をしているか分かるよう、登録ボタンの名前を操作の種類に合わせる。
   const actionLabels = {
     reply: '依頼回答を送る',
+    receipt: '受信通知を送る',
     proof: '校正確認を送る',
     progress: '製造進捗を通知する',
     delay: '納期遅延を通知する',
     finish: '製造完了を報告する',
-    paperMemo: '用紙メモを残す'
+    paperMemo: '用紙メモを残す',
+    assign: '担当者を登録する'
   };
 
   // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
@@ -229,6 +247,76 @@
 
   function hasUnsavedFinish(type) {
     return type === 'finish' && enteredValues() !== formSnapshot;
+  }
+
+  // 長い確認事項を現場で読んでもらえるよう、校正確認依頼の確認事項の欄は横いっぱいにし、
+  // ボタンで縦にも大きく広げられるようにする。広げた状態は入力欄を作り直しても保つ。
+  let instructionExpanded = false;
+
+  function widenable(label, textarea) {
+    label.classList.add('wide');
+    textarea.rows = 5;
+    const button = element('button');
+    button.type = 'button';
+    button.className = 'secondary widen';
+    const apply = () => {
+      textarea.classList.toggle('expanded', instructionExpanded);
+      button.textContent = instructionExpanded ? '入力欄を元の大きさに戻す' : '入力欄を広げる';
+      button.setAttribute('aria-pressed', String(instructionExpanded));
+    };
+    button.addEventListener('click', () => {
+      instructionExpanded = !instructionExpanded;
+      apply();
+      textarea.focus();
+    });
+    apply();
+    label.append(button);
+  }
+
+  // 不足部数の入れ忘れを防ぐため、良品部数を入れると対象依頼の部数から不足部数を計算する（P-030）。
+  // 計算した値は手で直すこともできる。良品部数が対象の部数を超えたときは注意を出す。
+  function autoShortage() {
+    if ($('operation').value !== 'finish') return;
+    const form = $('fields');
+    const good = form.querySelector('[name="goodQuantity"]');
+    const shortage = form.querySelector('[name="shortageQuantity"]');
+    const note = $('shortage-note');
+    const request = state.requests.get(form.querySelector('[name="requestId"]')?.value);
+    if (!good || !shortage || !note) return;
+    note.className = 'field-note';
+    if (!request) {
+      note.textContent = good.value ? '対象依頼を選ぶと、不足部数を自動で計算します。' : '';
+      return;
+    }
+    const target = request.targetQuantity;
+    if (!/^\d+$/.test(good.value)) {
+      shortage.value = '';
+      note.textContent = '良品部数を入れると、対象依頼の部数（' + copies(target) + '）から自動で計算します。';
+      return;
+    }
+    const count = Number(good.value);
+    if (count > target) {
+      shortage.value = '';
+      note.className = 'field-warning';
+      note.textContent = '良品部数が対象依頼の部数（' + copies(target) + '）を超えています。';
+      return;
+    }
+    shortage.value = String(target - count);
+    edited.add('shortageQuantity');
+    note.textContent = copies(target) + ' − 良品 ' + copies(count) + ' で自動計算しました（直すこともできます）。';
+  }
+
+  // 完成日の打ち間違いに報告前に気づけるよう、昨日より前の日付には注意を出す（P-023）。
+  function isOldCompletedDate(value) {
+    return Boolean(value) && value < daysBefore(localDate(), 1);
+  }
+
+  function updateCompletedDateWarning() {
+    const warning = $('completed-date-warning');
+    const input = $('fields').querySelector('[name="completedDate"]');
+    if (!warning || !input) return;
+    warning.textContent = isOldCompletedDate(input.value) ?
+      '完成日が昨日より前（' + input.value + '）になっています。日付に間違いがないか確認してください。' : '';
   }
 
   function renderForm(selectedOrder = '') {
@@ -259,8 +347,25 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
+      if (field === 'instruction') widenable(label, input);
+      if (field === 'shortageQuantity' && type === 'finish') {
+        const note = element('span');
+        note.id = 'shortage-note';
+        note.className = 'field-note';
+        note.setAttribute('role', 'status');
+        label.append(note);
+      }
+      if (field === 'completedDate') {
+        const warning = element('span');
+        warning.id = 'completed-date-warning';
+        warning.className = 'field-warning';
+        warning.setAttribute('role', 'status');
+        label.append(warning);
+        input.addEventListener('input', updateCompletedDateWarning);
+      }
       formFields.append(label);
     }
+    if (type === 'finish') autoShortage();
     if (type === 'reply') {
       const detail = element('div');
       detail.id = 'request-detail';
@@ -270,6 +375,8 @@
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       definition.internal ? '製造部だけのメモです。台帳には残りますが、営業部へ渡すCSVは書き出しません。' :
+      type === 'receipt' ? '読み込んだ依頼を選ぶと、正式な回答の前に「受信済み」を営業部へ知らせるCSVを書き出します。' +
+        '「未回答の依頼」欄からまとめて書き出すこともできます。' :
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     const button = $('save-event');
@@ -335,6 +442,11 @@
     return order.progress || '製造承認済み';
   }
 
+  // 校正の状況（版番号は「校正版」の列に分けて出す, P-024）。
+  function proofState(order) {
+    return order.proofStatus ? order.proofStatus.replace(/（第\d+版）$/, '') : '—';
+  }
+
   function rowMessage(tableBody, columns, message) {
     const row = element('tr');
     const cell = element('td', message);
@@ -361,6 +473,27 @@
   // 校正確認依頼を出して、お客様（営業部経由）の校正回答を待っている注文。工程を進められない。
   function isProofWaiting(order) {
     return isOpen(order) && order.proofStatus.startsWith('回答待ち');
+  }
+
+  // 日付（YYYY-MM-DD）どうしの日数差。
+  function daysBetween(from, to) {
+    return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
+  }
+
+  // 校正確認の回答期限を過ぎても返答がない注文（P-027）。一覧の先頭に出す。
+  function isProofOverdue(order, today) {
+    return isProofWaiting(order) && Boolean(order.proofDueDate) && order.proofDueDate < today;
+  }
+
+  // 校正の欄に出す文。返答待ちのときは何日待っているかと回答期限を添える。
+  function proofText(order, today) {
+    const state = proofState(order);
+    if (!isProofWaiting(order)) return state;
+    const waited = order.proofSentAt ? daysBetween(order.proofSentAt, today) : null;
+    const days = waited === null ? '' : waited <= 0 ? ' 当日' : ' ' + waited + '日目';
+    const due = order.proofDueDate ? '（期限 ' + order.proofDueDate +
+      (order.proofDueDate < today ? '・' + daysBetween(order.proofDueDate, today) + '日超過' : '') + '）' : '';
+    return state + days + due;
   }
 
   // 特急 → 今日納期 → 未着手 の順に上へ並べる。
@@ -406,6 +539,56 @@
     return input.value;
   }
 
+  // 注文詳細：工程が何度も更新された注文の経緯を、進捗通知の日時順に追えるようにする（P-028）。
+  // 最新の状態だけでは分からない「いつ・どの工程に変わったか」を、完了見込み日の変化とあわせて並べる。
+  function stageTimeline(order) {
+    const steps = events.filter(event => event.orderId === order.id && event.type === 'progress')
+      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish');
+    if (!steps.length && !finishes.length) return null;
+    const holder = element('details');
+    holder.className = 'timeline no-print';
+    holder.append(element('summary', '工程の経緯（' + (steps.length + finishes.length) + '件）'));
+    const list = element('ol');
+    let previous = '';
+    for (const step of steps) {
+      const item = element('li');
+      const time = element('time', formatDateTime(step.updatedAt));
+      time.dateTime = step.updatedAt;
+      item.append(time, ' ', element('strong', step.stage),
+        previous && previous !== step.stage ? '（' + previous + 'から）' : '',
+        step.expectedDate ? ' 完了見込み ' + step.expectedDate : '');
+      list.append(item);
+      previous = step.stage;
+    }
+    for (const finish of finishes) {
+      const item = element('li');
+      item.className = 'finish';
+      item.append(element('time', finish.completedDate), ' ', element('strong', '製造完了報告'),
+        ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
+      list.append(item);
+    }
+    holder.append(list);
+    return holder;
+  }
+
+  // 担当者の選択肢（登録済みの担当者と「未割当」）を作り直し、選択中の値を返す（P-025）。
+  function updateAssigneeChoices(input, orders) {
+    const current = input.value;
+    const counts = new Map();
+    for (const order of orders) counts.set(order.assignee, (counts.get(order.assignee) || 0) + 1);
+    const names = [...counts.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ja'));
+    const values = ['', ...names, ...(counts.has('') ? ['-'] : [])];
+    input.replaceChildren(option('', 'すべて'),
+      ...names.map(name => option(name, name + '（' + counts.get(name) + '件）')),
+      ...(counts.has('') ? [option('-', '未割当（' + counts.get('') + '件）')] : []));
+    input.value = values.includes(current) ? current : '';
+    const list = $('assignee-names');
+    list.replaceChildren(...[...new Set([...state.orders.values()].map(order => order.assignee).filter(Boolean))]
+      .map(name => option(name, '')));
+    return input.value;
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -422,19 +605,28 @@
     const all = filter.elements.showDone.checked ? listed : listed.filter(order => !isDone(order));
     // 用紙ごとに段取りをまとめられるよう、一覧にある用紙から選んで絞り込む。
     const wantPaper = updatePaperChoices(filter.elements.paper, all);
+    const wantAssignee = updateAssigneeChoices(filter.elements.assignee, all);
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
       .filter(order => !wantRush || order.rush)
       .filter(order => !filter.elements.proofWaiting.checked || isProofWaiting(order))
       .filter(order => !wantPaper || order.paper === wantPaper)
+      .filter(order => !wantAssignee || order.assignee === (wantAssignee === '-' ? '' : wantAssignee))
       .filter(order => !idQuery || order.id.toLowerCase().includes(idQuery))
       .filter(order => (!wantDue && !wantNew) ||
-        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
-      .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
-    // 作業内容が同じ注文を固められるよう、品名順では品名でまとめる（同じ品名の中は優先度順のまま）。
-    if (filter.elements.sort.value === 'product') {
-      shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
+        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)));
+    // 並び順（P-029）。初期表示は納期順。登録順は新しく登録した注文が上（all の並びのまま）。
+    // 納期順・優先度順・品名順は、まず優先度順に並べてから並べ替える（安定ソートなので同じ納期・品名の中は優先度順）。
+    const sortMode = filter.elements.sort.value;
+    if (sortMode !== 'registered') {
+      shown.sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
+      if (sortMode === 'due') shown.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      // 作業内容が同じ注文を固められるよう、品名順では品名でまとめる（P-014）。
+      if (sortMode === 'product') shown.sort((a, b) => a.product.localeCompare(b.product, 'ja'));
+      // 校正の回答期限が過ぎた注文は先頭に出す（P-027）。期限切れどうしは期限が古いものを上にする。
+      shown.sort((a, b) => Number(isProofOverdue(b, today)) - Number(isProofOverdue(a, today)) ||
+        (isProofOverdue(a, today) ? a.proofDueDate.localeCompare(b.proofDueDate) : 0));
     }
 
     const productCounts = new Map();
@@ -446,7 +638,8 @@
       if (dueToday) row.className = 'due-today';
       if (isDone(order)) row.classList.add('done');
       const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
-        statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
+        statusOf(order), proofText(order, today), order.proofVersion ? '第' + order.proofVersion + '版' : '—',
+        order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
       productCell(cells[1], order, (productCounts.get(order.product) || 0) > 1);
@@ -459,6 +652,7 @@
       if (order.initialFinished && hasPendingAdditional(order)) tags.push(['追加分作業あり', 'tag tag-additional']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
+      if (isProofOverdue(order, today)) tags.push(['校正期限切れ', 'tag tag-due']);
       if (tags.length) {
         const holder = element('div');
         for (const [label, className] of tags) {
@@ -468,11 +662,16 @@
         }
         cells[0].prepend(holder);
       }
+      const assignee = element('div', '担当：' + (order.assignee || '未割当'));
+      assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
+      cells[0].append(assignee);
+      const timeline = stageTimeline(order);
+      if (timeline) cells[0].append(timeline);
       row.append(...cells);
       list.append(row);
     }
     if (!list.children.length) {
-      rowMessage(list, 10, all.length ? '条件に合う注文はありません。' : '注文がありません。');
+      rowMessage(list, 11, all.length ? '条件に合う注文はありません。' : '注文がありません。');
     }
     $('order-count').textContent = shown.length === all.length ?
       all.length + '件' : shown.length + '件 ／ 全' + all.length + '件';
@@ -615,11 +814,50 @@
       button.addEventListener('click', () => startReply(request));
       const actionCell = element('td');
       actionCell.append(button);
-      row.append(typeCell, orderCell, element('td', requestSummary(request)), element('td', request.requestId), actionCell);
+      const receiptCell = element('td');
+      if (request.receivedAt) {
+        receiptCell.textContent = '通知済み ' + formatDateTime(request.receivedAt);
+      } else {
+        const notify = element('button', '受信を通知');
+        notify.type = 'button';
+        notify.className = 'secondary';
+        notify.addEventListener('click', () => sendReceipts([request]));
+        receiptCell.append(notify);
+      }
+      row.append(typeCell, orderCell, element('td', requestSummary(request)), element('td', request.requestId),
+        receiptCell, actionCell);
       list.append(row);
     }
-    if (!list.children.length) rowMessage(list, 5, '未回答の依頼はありません。');
+    if (!list.children.length) rowMessage(list, 6, '未回答の依頼はありません。');
     $('pending-count').textContent = pending.length + '件';
+    const unnotified = pending.filter(request => !request.receivedAt).length;
+    $('notify-all').disabled = !unnotified;
+    $('notify-all').textContent = unnotified ? '未通知の ' + unnotified + ' 件をまとめて受信通知' : '受信通知はすべて送信済み';
+  }
+
+  function formatDateTime(iso) {
+    const date = new Date(iso);
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' +
+      String(date.getDate()).padStart(2, '0') + ' ' + String(date.getHours()).padStart(2, '0') + ':' +
+      String(date.getMinutes()).padStart(2, '0');
+  }
+
+  // 正式な回答の前に「受信済み」を営業部へ知らせる。複数件はまとめて1つのCSVに書き出す。
+  function sendReceipts(requests) {
+    const receivedAt = new Date().toISOString();
+    const items = requests.map(request => ({ eventId: identifier('EV'), type: 'receipt',
+      requestId: request.requestId, orderId: request.orderId, receivedAt, createdAt: localDate() }));
+    try {
+      events = workflow.mergeEvents(events, items).events;
+      const draft = captureInput();
+      refresh();
+      restoreInput(draft);
+      download('receipt-' + (items.length === 1 ? items[0].orderId + '-' + items[0].eventId : localDate() + '-' + items.length + '件') + '.csv',
+        workflow.exportExchange('receipt', items));
+      show('受信通知を ' + items.length + ' 件書き出しました。営業部へ渡してください。');
+    } catch (error) {
+      show(error.message, true);
+    }
   }
 
   // 日付（YYYY-MM-DD）から days 日前の日付を返す。
@@ -683,6 +921,8 @@
   }
 
   $('cancel-search').addEventListener('input', renderCancelled);
+  $('notify-all').addEventListener('click', () =>
+    sendReceipts([...state.requests.values()].filter(request => !request.answer && !request.receivedAt)));
   $('history-filter').addEventListener('change', renderHistory);
   $('history-filter').addEventListener('click', event => {
     const button = event.target.closest('button[data-since]');
@@ -700,18 +940,34 @@
   $('order-filter').addEventListener('input', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
   $('fields').addEventListener('change', event => {
-    if (event.target.name === 'requestId') renderRequestDetail();
+    if (event.target.name === 'requestId') {
+      renderRequestDetail();
+      autoShortage();
+    }
+  });
+  $('fields').addEventListener('input', event => {
+    if (event.target.name === 'goodQuantity') autoShortage();
   });
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
+    if (type === 'finish' && isOldCompletedDate(data.completedDate) &&
+      !confirm('完成日が ' + data.completedDate + ' になっています（昨日より前の日付です）。\n' +
+        'このまま製造完了報告を送りますか？')) {
+      show('製造完了報告の送信を取りやめました。完成日を確認してください。');
+      $('fields').querySelector('[name="completedDate"]').focus();
+      return;
+    }
     const item = { eventId: identifier('EV'), type, ...data };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
     if (type === 'progress') item.updatedAt = new Date().toISOString();
+    if (type === 'receipt') item.receivedAt = new Date().toISOString();
+    // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
+    item.createdAt = localDate();
 
     try {
       events = workflow.mergeEvents(events, [item]).events;
@@ -744,7 +1000,9 @@
       refresh();
       showImportedOrders(file.name, [...state.orders.values()].filter(order => !knownOrders.has(order.id)), result.skipped);
       const notice = restoreInput(draft);
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice);
+      const unnotified = [...state.requests.values()].filter(request => !request.answer && !request.receivedAt).length;
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' + notice +
+        (unnotified ? '受信通知をまだ出していない依頼が ' + unnotified + ' 件あります（「未回答の依頼」欄から書き出せます）。' : ''));
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
     } finally {
@@ -793,10 +1051,12 @@
       ['showDone', '完了報告済みも表示']]
       .filter(([name]) => filter.elements[name].checked).map(([, label]) => label);
     if (filter.elements.paper.value) conditions.push('用紙「' + filter.elements.paper.value + '」');
+    const assignee = filter.elements.assignee.value;
+    if (assignee) conditions.push(assignee === '-' ? '担当者 未割当' : '担当者「' + assignee + '」');
     const idQuery = filter.elements.idSearch.value.trim();
     if (idQuery) conditions.push('注文IDに「' + idQuery + '」を含む');
     return (conditions.length ? conditions.join('・') : 'なし（全件）') +
-      '　並び順：' + (filter.elements.sort.value === 'product' ? '品名順' : '優先度順');
+      '　並び順：' + filter.elements.sort.selectedOptions[0].textContent;
   }
 
   function updatePrintInfo() {
