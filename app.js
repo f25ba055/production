@@ -152,6 +152,13 @@
   function updateDeliveryChoices() {
     const input = $('fields').querySelector('[name="deliveryNo"]');
     if (!input) return;
+    if (correctionTarget) {
+      // 訂正版は元の報告と同じ回に固定する（P-038）。
+      input.replaceChildren(correctionTarget.deliveryNo ?
+        option(correctionTarget.deliveryNo, '第' + correctionTarget.deliveryNo + '回（訂正）') : option('', '分納なし'));
+      input.disabled = !correctionTarget.deliveryNo;
+      return;
+    }
     const request = state.requests.get($('fields').querySelector('[name="requestId"]')?.value);
     const deliveries = (request && request.deliveries) || [];
     if (!deliveries.length) {
@@ -300,7 +307,7 @@
   }
 
   function automaticField(type, field) {
-    return field === 'updatedAt' || field === 'receivedAt' || (type === 'order' && field === 'orderId') ||
+    return field === 'updatedAt' || field === 'receivedAt' || field === 'correctsEventId' || (type === 'order' && field === 'orderId') ||
       (['order', 'change', 'cancel', 'additional'].includes(type) && field === 'requestId') ||
       (type === 'proof' && field === 'proofId');
   }
@@ -309,6 +316,13 @@
     const [, kind] = fields[field];
     if (field === 'orderId') {
       return select(field, orderChoices(type).map(item => [item.id, orderLabel(item)]));
+    }
+    if (field === 'requestId' && type === 'finish' && correctionTarget) {
+      const request = state.requests.get(correctionTarget.requestId);
+      const input = select(field, [[request.requestId, workflow.interfaces[request.type].name + ' · ' +
+        copies(request.targetQuantity) + ' · ' + request.requestId + '（訂正）']]);
+      input.value = request.requestId;
+      return input;
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
     if (field === 'deliveryNo') {
@@ -485,6 +499,39 @@
     return label;
   }
 
+  // 完成数の訂正版（P-038）。やり取り履歴の「訂正版を作る」で、訂正する元の製造完了報告を選ぶ。
+  let correctionTarget = null;
+
+  function startCorrection(event) {
+    if (hasUnsavedFinish($('operation').value) &&
+      !confirm('入力中の製造完了報告は消えます。訂正版の作成に切り替えますか？')) return;
+    correctionTarget = event;
+    $('operation').value = 'finish';
+    renderForm(event.orderId);
+    $('entry').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('fields').querySelector('[name="goodQuantity"]').focus({ preventScroll: true });
+    show('製造完了報告（' + event.eventId + '）の訂正版を作ります。正しい部数を入れて「訂正版を報告する」を押してください。');
+  }
+
+  function correctionBanner() {
+    const banner = element('div');
+    banner.className = 'correction-banner wide-block';
+    banner.append(element('strong', '訂正版を作成中'), element('span', '元の報告：' + correctionTarget.completedDate +
+      ' 良品 ' + copies(correctionTarget.goodQuantity) + '・不足 ' + copies(correctionTarget.shortageQuantity) +
+      (correctionTarget.deliveryNo ? '（分納 第' + correctionTarget.deliveryNo + '回）' : '') +
+      '。訂正版は元の報告を置き換えます（良品数は足し算されません）。'));
+    const cancel = element('button', '訂正をやめる');
+    cancel.type = 'button';
+    cancel.className = 'secondary';
+    cancel.addEventListener('click', () => {
+      correctionTarget = null;
+      renderForm();
+      show('訂正をやめました。');
+    });
+    banner.append(cancel);
+    return banner;
+  }
+
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
     const definition = workflow.interfaces[type];
@@ -543,6 +590,14 @@
       autoShortage();
     }
     if (type === 'reply') updateReasonCode();
+    if (type !== 'finish' || (correctionTarget && selectedOrder !== correctionTarget.orderId)) correctionTarget = null;
+    if (type === 'finish' && correctionTarget) {
+      formFields.prepend(correctionBanner());
+      const set = (name, value) => { const input = formFields.querySelector('[name="' + name + '"]'); if (input) input.value = value; };
+      set('completedDate', correctionTarget.completedDate);
+      set('goodQuantity', correctionTarget.goodQuantity);
+      set('shortageQuantity', correctionTarget.shortageQuantity);
+    }
     if (type === 'proof') {
       updateProofFileName(order);
       $('fields').querySelector('[name="version"]').addEventListener('input', () => updateProofFileName(order));
@@ -571,7 +626,7 @@
       type === 'progress' ? '対象の注文を選択してください。完了済みで未完了の追加製造がない注文は表示されません。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     const button = $('save-event');
-    button.textContent = actionLabels[type] || '登録してCSVを書き出す';
+    button.textContent = type === 'finish' && correctionTarget ? '訂正版を報告する' : actionLabels[type] || '登録してCSVを書き出す';
     button.title = definition.internal ? '台帳に記録します（CSVは書き出しません）' : '台帳に登録し、営業部へ渡すCSVを書き出します';
     button.disabled = type !== 'order' && orderChoices(type).length === 0;
     formSnapshot = enteredValues();
@@ -753,7 +808,9 @@
   function stageTimeline(order) {
     const steps = events.filter(event => event.orderId === order.id && event.type === 'progress')
       .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
-    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish');
+    // 訂正された元の報告は除き、訂正版には印を付ける（P-038）。
+    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish' &&
+      !(state.finishes.get(event.eventId) || {}).supersededBy);
     if (!steps.length && !finishes.length) return null;
     const holder = element('details');
     holder.className = 'timeline no-print';
@@ -775,7 +832,8 @@
       const item = element('li');
       item.className = 'finish';
       item.append(element('time', finish.completedDate), ' ',
-        element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '')),
+        element('strong', '製造完了報告' + (finish.deliveryNo ? '（分納 第' + finish.deliveryNo + '回）' : '') +
+          (finish.correctsEventId ? '（訂正版）' : '')),
         ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
       list.append(item);
     }
@@ -1133,10 +1191,22 @@
         button.className = 'secondary';
         button.addEventListener('click', () => eventDownload(event));
         actionCell.append(button);
+        // 完成数の訂正版（P-038）。まだ訂正されていない報告だけ訂正できる。
+        const finish = event.type === 'finish' && state.finishes.get(event.eventId);
+        if (finish && finish.supersededBy) {
+          actionCell.append(Object.assign(element('div', '訂正済み'), { className: 'sub' }));
+        } else if (finish) {
+          const fix = element('button', '訂正版を作る');
+          fix.type = 'button';
+          fix.className = 'secondary';
+          fix.addEventListener('click', () => startCorrection(finish));
+          actionCell.append(' ', fix);
+        }
       } else {
         actionCell.textContent = '—';
       }
-      row.append(element('td', definition.internal ? '部内メモ' : sent ? '送信側' : '受信側'), element('td', definition.name),
+      row.append(element('td', definition.internal ? '部内メモ' : sent ? '送信側' : '受信側'),
+        element('td', definition.name + (event.correctsEventId ? '（訂正版）' : '')),
         element('td', event.orderId), element('td', event.importedAt || '—'), detailCell, actionCell);
       list.append(row);
     }
@@ -1227,7 +1297,7 @@
       $('fields').querySelector('[name="reason"]').focus();
       return;
     }
-    if (type === 'finish' && isOldCompletedDate(data.completedDate) &&
+    if (type === 'finish' && !correctionTarget && isOldCompletedDate(data.completedDate) &&
       !confirm('完成日が ' + data.completedDate + ' になっています（昨日より前の日付です）。\n' +
         'このまま製造完了報告を送りますか？')) {
       show('製造完了報告の送信を取りやめました。完成日を確認してください。');
@@ -1244,6 +1314,7 @@
       lastRegistrant = item.registeredBy;
     }
     if (type === 'receipt') item.receivedAt = new Date().toISOString();
+    if (type === 'finish') item.correctsEventId = correctionTarget ? correctionTarget.eventId : '';
     // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
     item.createdAt = localDate();
 

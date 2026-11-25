@@ -16,7 +16,8 @@
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate proofFile' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo' },
+    // 訂正版（P-038）は correctsEventId に元の報告のイベントIDを入れる。元の報告の部数を置き換える（足さない）。
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo correctsEventId' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
     paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
     assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' }
@@ -32,7 +33,8 @@
   // 校正PDFのファイル名（proofFile / confirmedFile, P-031）の列がない旧形式は、ファイル名なし（空）として読む。
   // 列は必ず末尾に足していくので、旧形式の見出しは今の見出しの先頭部分と一致する。
   // 足りない末尾の列がすべて既定値を持っていれば、旧形式として受け付ける。
-  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '' };
+  const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '',
+    correctsEventId: '' };
 
   function isLegacyHeader(header, expected) {
     return header.length < expected.length && header.length > 2 &&
@@ -56,7 +58,7 @@
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
   const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo', 'proofFile',
-    'confirmedFile'];
+    'confirmedFile', 'correctsEventId'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
@@ -91,7 +93,7 @@
         requireThat(/^\d{4}-\d{2}-\d{2}$/.test(value) && !isNaN(date) &&
           date.toISOString().slice(0, 10) === value, field + ' は有効な日付で入力してください。');
       }
-      if (field.endsWith('Id')) {
+      if (field.endsWith('Id') && (value || !optionalFields.includes(field))) {
         requireThat(/^[A-Za-z0-9_-]+$/.test(value), field + ' が不正です。');
       }
     }
@@ -281,12 +283,16 @@
         order.delayReason = event.reason;
         order.expectedDate = event.expectedDate;
         break;
-      case 'finish':
+      case 'finish': {
+        const reported = Number(event.goodQuantity) + Number(event.shortageQuantity);
+        const copies = value => Number(value).toLocaleString('ja-JP') + '部';
+        if (event.correctsEventId) {
+          correctFinish(state, event, order, request, reported, copies);
+          break;
+        }
         requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
           request.answer === '承認' && !request.finished, '承認済みで未完了の製造依頼を選んでください。');
         requireThat(!order.proofStatus || order.proofStatus.startsWith('承認'), '校正の承認を確認してください。');
-        const reported = Number(event.goodQuantity) + Number(event.shortageQuantity);
-        const copies = value => Number(value).toLocaleString('ja-JP') + '部';
         if (request.deliveries && request.deliveries.length) {
           // 分納（P-026）は回ごとに完了報告を受け、すべての回がそろったら依頼を完了にする。
           requireThat(event.deliveryNo, 'この依頼は分納です。完了した回を選んでください。');
@@ -300,6 +306,7 @@
           delivery.goodQuantity = Number(event.goodQuantity);
           delivery.shortageQuantity = Number(event.shortageQuantity);
           delivery.completedDate = event.completedDate;
+          recordFinish(state, event);
           request.goodQuantity = (request.goodQuantity || 0) + delivery.goodQuantity;
           request.shortageQuantity = (request.shortageQuantity || 0) + delivery.shortageQuantity;
           order.goodQuantity += delivery.goodQuantity;
@@ -322,8 +329,46 @@
         request.completedDate = event.completedDate;
         order.goodQuantity += request.goodQuantity;
         if (request.type === 'order') order.initialFinished = true;
+        recordFinish(state, event);
         break;
+      }
     }
+  }
+
+  // 製造完了報告の記録。訂正版（P-038）で元の報告を探し、二重に足さないために使う。
+  function recordFinish(state, event) {
+    state.finishes.set(event.eventId, { eventId: event.eventId, orderId: event.orderId, requestId: event.requestId,
+      deliveryNo: event.deliveryNo || '', goodQuantity: Number(event.goodQuantity),
+      shortageQuantity: Number(event.shortageQuantity), completedDate: event.completedDate,
+      correctsEventId: event.correctsEventId || '', supersededBy: '' });
+  }
+
+  // 完成数の訂正版（P-038）。元の報告の良品・不足部数を訂正版の値に置き換える（差分だけを反映する）。
+  // 訂正できるのは、まだ訂正されていない最新の報告だけ。同じ依頼・同じ回の部数の合計に合わせる。
+  function correctFinish(state, event, order, request, reported, copies) {
+    const original = state.finishes.get(event.correctsEventId);
+    requireThat(original && original.orderId === order.id,
+      '訂正する元の製造完了報告（' + event.correctsEventId + '）が見つかりません。先に元の報告を読み込んでください。');
+    requireThat(!original.supersededBy, 'この製造完了報告はすでに訂正済みです（訂正版：' + original.supersededBy + '）。最新の報告を訂正してください。');
+    requireThat(request && event.requestId === original.requestId && (event.deliveryNo || '') === original.deliveryNo,
+      '訂正版は、元の報告と同じ依頼・同じ分納の回にしてください。');
+    const delivery = original.deliveryNo ? (request.deliveries || []).find(item => item.no === Number(original.deliveryNo)) : null;
+    const target = delivery ? delivery.quantity : request.targetQuantity;
+    requireThat(reported === target, '良品部数と不足部数の合計を、元の報告と同じ' + copies(target) +
+      'に合わせてください。入力の合計は' + copies(reported) + 'です。');
+    const goodDiff = Number(event.goodQuantity) - original.goodQuantity;
+    const shortageDiff = Number(event.shortageQuantity) - original.shortageQuantity;
+    order.goodQuantity += goodDiff;
+    request.goodQuantity = (request.goodQuantity || 0) + goodDiff;
+    request.shortageQuantity = (request.shortageQuantity || 0) + shortageDiff;
+    if (delivery) {
+      delivery.goodQuantity = Number(event.goodQuantity);
+      delivery.shortageQuantity = Number(event.shortageQuantity);
+      delivery.completedDate = event.completedDate;
+    }
+    if (!delivery || request.finished) request.completedDate = event.completedDate;
+    original.supersededBy = event.eventId;
+    recordFinish(state, event);
   }
 
   function eventValues(event) {
@@ -331,7 +376,7 @@
   }
 
   function buildState(events) {
-    const state = { orders: new Map(), requests: new Map(), proofs: new Map() };
+    const state = { orders: new Map(), requests: new Map(), proofs: new Map(), finishes: new Map() };
     const seen = new Map();
     for (const event of events) {
       requireThat(!seen.has(event.eventId), '台帳内でイベントIDが重複しています。');
