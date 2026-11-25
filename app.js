@@ -174,7 +174,9 @@
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    for (const order of [...state.orders.values()].reverse()) {
+    const orders = [...state.orders.values()].filter(order =>
+      state.requests.get(order.originalRequestId).answer !== '却下');
+    for (const order of orders.reverse()) {
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
@@ -183,7 +185,26 @@
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = state.orders.size + '件';
+    $('order-count').textContent = orders.length + '件';
+  }
+
+  function renderRejected() {
+    const list = $('rejected');
+    list.replaceChildren();
+    const rejected = [...state.requests.values()].filter(request => request.answer === '却下').reverse();
+    for (const request of rejected) {
+      const order = state.orders.get(request.orderId);
+      const content = ['paper', 'quantity', 'dueDate', 'reason'].filter(field => request[field])
+        .map(field => fields[field][0] + '：' + request[field]).join('\n');
+      const values = [order.id, order.product, workflow.interfaces[request.type].name, request.requestId,
+        content, request.answerReason];
+      const row = element('tr');
+      row.append(...values.map(value => element('td', value || '—')));
+      row.cells[4].className = 'multiline';
+      list.append(row);
+    }
+    if (!list.children.length) rowMessage(list, 6, '却下した依頼はありません。');
+    $('rejected-count').textContent = rejected.length + '件';
   }
 
   function renderHistory() {
@@ -222,6 +243,7 @@
   function refresh() {
     state = workflow.buildState(events);
     renderOrders();
+    renderRejected();
     renderHistory();
     renderForm();
   }
