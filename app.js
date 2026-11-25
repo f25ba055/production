@@ -13,7 +13,8 @@
     receiveMethod: ['受取方法', ['店頭受取', '配送']], reason: ['理由'], version: ['版番号', 'number'],
     instruction: ['確認事項'], responseDueDate: ['回答期限', 'date'],
     proofDecision: ['校正回答', ['承認', '修正依頼']], comment: ['修正コメント'],
-    decision: ['依頼回答', ['承認', '却下']], reasonCode: ['却下理由の分類', workflow.reasonCodes], confirmedDueDate: ['確定納期', 'date'],
+    decision: ['依頼回答', ['承認', '却下']],
+    printedQuantity: ['印刷済み部数', 'number'], extraCost: ['追加費用の見込み（円）', 'number'], reasonCode: ['却下理由の分類', workflow.reasonCodes], confirmedDueDate: ['確定納期', 'date'],
     stage: ['工程', workflow.stages], expectedDate: ['完了見込み日', 'date'],
     completedDate: ['完成日', 'date'], goodQuantity: ['良品部数', 'number'],
     shortageQuantity: ['不足部数', 'number'],
@@ -201,6 +202,11 @@
     if (request.type === 'order') rows.push(['特急区分', request.rush || '通常'], ['受付経路', request.channel || '未設定'],
       ['受取方法', request.receiveMethod || '未設定']);
     if (request.reason) rows.push(['依頼の理由', request.reason]);
+    if (request.type === 'cancel') {
+      // キャンセルの判断材料（P-046）。印刷済み部数・追加費用の見込みを入れる手がかりにする。
+      rows.push(['今の工程', order.progress || (order.approved ? '未着手' : '製造承認前')],
+        ['良品累計', copies(order.goodQuantity)]);
+    }
     holder.append(element('h3', '回答する依頼の内容'));
     const newer = newerChange(request);
     if (newer) {
@@ -472,6 +478,19 @@
     if (!rejecting) code.value = '';
   }
 
+  // キャンセル依頼への回答だけ、印刷済み部数と追加費用の見込みを入れる欄を出す（P-046）。
+  function updateCancelFields() {
+    const request = state.requests.get($('fields').querySelector('[name="requestId"]')?.value);
+    const cancel = Boolean(request && request.type === 'cancel');
+    for (const name of ['printedQuantity', 'extraCost']) {
+      const input = $('fields').querySelector('[name="' + name + '"]');
+      if (!input) continue;
+      input.closest('label').hidden = !cancel;
+      input.min = '0';
+      if (!cancel) input.value = '';
+    }
+  }
+
   // 工程の飛ばし・逆戻りの確認（P-043）。準備中→印刷中→加工中→検品中の順で、次の工程以外に進めるときに知らせる。
   // 進捗通知をまだ出していない注文は、準備中から始まるものとする。
   function stageJumpWarning(order, stage) {
@@ -579,7 +598,7 @@
       const label = element('label');
       const input = inputFor(type, field, order);
       // 却下理由の分類は却下のときだけ必須なので、送信時に確かめる（承認のときは隠れて空のまま）。
-      input.required = !['comment', 'confirmedDueDate', 'note', 'reasonCode'].includes(field) &&
+      input.required = !['comment', 'confirmedDueDate', 'note', 'reasonCode', 'printedQuantity', 'extraCost'].includes(field) &&
         !(field === 'reason' && type === 'reply');
       if (field === 'orderId' && selectedOrder) input.value = selectedOrder;
       if (field === 'orderId') input.addEventListener('change', () => {
@@ -629,7 +648,10 @@
       updateDeliveryChoices();
       autoShortage();
     }
-    if (type === 'reply') updateReasonCode();
+    if (type === 'reply') {
+      updateReasonCode();
+      updateCancelFields();
+    }
     if (type !== 'finish' || (correctionTarget && selectedOrder !== correctionTarget.orderId)) correctionTarget = null;
     if (type === 'finish' && correctionTarget) {
       formFields.prepend(correctionBanner());
@@ -1065,7 +1087,7 @@
       const content = ['paper', 'quantity', 'dueDate', 'reason'].filter(field => request[field])
         .map(field => fields[field][0] + '：' + (field === 'quantity' ? copies(request[field]) : request[field]))
         .join('\n');
-      const reason = [request.answerReasonCode, request.answerReason].filter(Boolean).join('：');
+      const reason = [request.answerReasonCode, request.answerReason].filter(Boolean).join('：') + cancelCostText(request);
       const values = [order.id, order.product, workflow.interfaces[request.type].name, request.requestId,
         content, reason];
       const row = element('tr');
@@ -1077,6 +1099,14 @@
     $('rejected-count').textContent = rejected.length + '件';
   }
 
+  // キャンセル回答に付けた印刷済み部数・追加費用の見込み（P-046）。
+  function cancelCostText(request) {
+    const parts = [];
+    if (request.printedQuantity !== undefined && request.printedQuantity !== '') parts.push('印刷済み ' + copies(request.printedQuantity));
+    if (request.extraCost !== undefined && request.extraCost !== '') parts.push('追加費用見込み ' + formatCount(request.extraCost) + '円');
+    return parts.length ? '（' + parts.join('・') + '）' : '';
+  }
+
   function renderCancelled() {
     const list = $('cancelled');
     list.replaceChildren();
@@ -1086,7 +1116,7 @@
     const matched = approved.map(request => {
       const order = state.orders.get(request.orderId);
       return [order.id, order.product, order.paper, copies(order.quantity), request.requestId,
-        request.reason, request.answerReason];
+        request.reason, [request.answerReason, cancelCostText(request)].filter(Boolean).join(' ')];
     }).filter(values => [values[0], values[1], values[4]].some(value => value.toLowerCase().includes(keyword)));
     for (const values of matched) {
       const row = element('tr');
@@ -1165,6 +1195,7 @@
     const requestInput = $('fields').querySelector('[name="requestId"]');
     requestInput.value = request.requestId;
     renderRequestDetail();
+    updateCancelFields();
     $('entry').scrollIntoView({ behavior: 'smooth', block: 'start' });
     ($('fields').querySelector('[name="decision"]') || requestInput).focus({ preventScroll: true });
     show(workflow.interfaces[request.type].name + '（' + request.requestId + '）への回答を入力してください。');
@@ -1352,6 +1383,7 @@
     if (event.target.name === 'decision') updateReasonCode();
     if (event.target.name === 'requestId') {
       renderRequestDetail();
+      updateCancelFields();
       updateDeliveryChoices();
       autoShortage();
     }

@@ -10,7 +10,7 @@
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     // 分納（P-026）。製造依頼・追加製造依頼を、回（deliveryNo）ごとの納品日と部数に分ける。1回につき1行。
     split:       { name: '分納指示', from: 'sales', fields: 'orderId requestId deliveryNo deliveryDate quantity' },
-    reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode' },
+    reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason reasonCode printedQuantity extraCost' },
     // 依頼を読み込んだことを、正式な回答（依頼回答）の前に営業部へ知らせる（P-006）。
     receipt:     { name: '受信通知', from: 'factory', fields: 'requestId orderId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate proofFile' },
@@ -36,7 +36,7 @@
   // 列は必ず末尾に足していくので、旧形式の見出しは今の見出しの先頭部分と一致する。
   // 足りない末尾の列がすべて既定値を持っていれば、旧形式として受け付ける。
   const fieldDefaults = { rush: '通常', channel: '未設定', reasonCode: '', deliveryNo: '', proofFile: '', confirmedFile: '',
-    correctsEventId: '', receiveMethod: '未設定' };
+    correctsEventId: '', receiveMethod: '未設定', printedQuantity: '', extraCost: '' };
 
   function isLegacyHeader(header, expected) {
     return header.length < expected.length && header.length > 2 &&
@@ -62,7 +62,7 @@
   const stages = ['準備中', '印刷中', '加工中', '検品中'];
   const requestTypes = ['order', 'change', 'cancel', 'additional'];
   const optionalFields = ['comment', 'confirmedDueDate', 'reason', 'note', 'reasonCode', 'deliveryNo', 'proofFile',
-    'confirmedFile', 'correctsEventId'];
+    'confirmedFile', 'correctsEventId', 'printedQuantity', 'extraCost'];
   const paperStatuses = ['仮手配', '入庫'];
   const positiveFields = ['quantity', 'version'];
   const countFields = ['goodQuantity', 'shortageQuantity'];
@@ -110,6 +110,11 @@
       requireThat(event.reasonCode === '' || (event.decision === '却下' && reasonCodes.includes(event.reasonCode)),
         '却下理由の分類が不正です。');
       requireThat(event.reasonCode !== 'その他' || event.reason.trim(), '却下理由が「その他」のときは、理由（補足）を入力してください。');
+      // キャンセル依頼への回答（P-046）だけ、印刷済み部数と追加費用の見込み（円）を付けられる。空欄は「なし・不明」。
+      for (const field of ['printedQuantity', 'extraCost']) {
+        requireThat(event[field] === '' || (/^\d+$/.test(event[field]) && Number.isSafeInteger(Number(event[field]))),
+          (field === 'printedQuantity' ? '印刷済み部数' : '追加費用の見込み') + 'は0以上の整数で入力してください。');
+      }
     }
     if (event.type === 'order') {
       requireThat(rushValues.includes(event.rush), '特急区分は「通常」か「特急」で入力してください。');
@@ -213,6 +218,11 @@
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
       request.answerReason = event.reason;
       request.answerReasonCode = event.reasonCode || '';
+      if (event.printedQuantity !== '' || event.extraCost !== '') {
+        requireThat(request.type === 'cancel', '印刷済み部数・追加費用の見込みは、キャンセル依頼への回答にだけ付けられます。');
+      }
+      request.printedQuantity = event.printedQuantity;
+      request.extraCost = event.extraCost;
       return;
     }
 
