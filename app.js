@@ -175,6 +175,7 @@
     const list = $('orders');
     list.replaceChildren();
     for (const order of [...state.orders.values()].reverse()) {
+      if (order.cancelled) continue;
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
@@ -182,8 +183,30 @@
       row.append(...values.map(value => element('td', value)));
       list.append(row);
     }
+    $('order-count').textContent = list.children.length + '件';
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = state.orders.size + '件';
+  }
+
+  function renderCancelled() {
+    const list = $('cancelled');
+    list.replaceChildren();
+    const approved = [...state.requests.values()]
+      .filter(request => request.type === 'cancel' && request.answer === '承認').reverse();
+    const keyword = $('cancel-search').value.trim().toLowerCase();
+    const matched = approved.map(request => {
+      const order = state.orders.get(request.orderId);
+      return [order.id, order.product, order.paper, order.quantity + '部', request.requestId,
+        request.reason, request.answerReason];
+    }).filter(values => [values[0], values[1], values[4]].some(value => value.toLowerCase().includes(keyword)));
+    for (const values of matched) {
+      const row = element('tr');
+      row.append(...values.map(value => element('td', value || '—')));
+      list.append(row);
+    }
+    if (!list.children.length) {
+      rowMessage(list, 7, approved.length ? '該当する記録がありません。' : '取消を承認した注文はありません。');
+    }
+    $('cancelled-count').textContent = approved.length + '件';
   }
 
   function renderHistory() {
@@ -223,8 +246,11 @@
     state = workflow.buildState(events);
     renderOrders();
     renderHistory();
+    renderCancelled();
     renderForm();
   }
+
+  $('cancel-search').addEventListener('input', renderCancelled);
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());

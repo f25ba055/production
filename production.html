@@ -72,6 +72,19 @@
         </table>
       </div>
     </section>
+
+    <details class="guide">
+      <summary>取消承認の記録 <span id="cancelled-count" class="count"></span></summary>
+      <label>注文ID・品名・依頼IDで検索
+        <input id="cancel-search" type="search">
+      </label>
+      <div class="table-wrap">
+        <table aria-label="取消承認の記録">
+          <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">取消依頼ID</th><th scope="col">取消理由</th><th scope="col">承認時のコメント</th></tr></thead>
+          <tbody id="cancelled"></tbody>
+        </table>
+      </div>
+    </details>
   </main>
 </body>
 </html>
