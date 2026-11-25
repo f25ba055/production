@@ -19,6 +19,18 @@
   let events = [];
   let state = workflow.buildState(events);
 
+  // 部数は読み上げで桁を間違えないよう、画面では3桁ごとに区切って表示する（CSVは元の数値のまま）。
+  const quantityFields = ['quantity', 'goodQuantity', 'shortageQuantity'];
+
+  function formatCount(value) {
+    const number = Number(value);
+    return value === '' || value === undefined || !Number.isFinite(number) ? value : number.toLocaleString('ja-JP');
+  }
+
+  function copies(value) {
+    return formatCount(value) + '部';
+  }
+
   function element(tag, content) {
     const item = document.createElement(tag);
     if (content !== undefined) item.textContent = content;
@@ -71,7 +83,7 @@
       .filter(request => type === 'reply' ? !request.answer :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
+        (type === 'finish' ? copies(request.targetQuantity) + ' · ' : '') + request.requestId]);
   }
 
   function proofChoices(order) {
@@ -211,9 +223,9 @@
       const row = element('tr');
       const dueToday = isDueToday(order, today);
       if (dueToday) row.className = 'due-today';
-      const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
+      const values = [order.id, order.product, order.paper, copies(order.quantity), order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
-        order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
+        order.delayReason || '—', order.initialFinished || order.goodQuantity ? copies(order.goodQuantity) : '—'];
       const cells = values.map(value => element('td', value));
       if (order.rush) row.classList.add('rush');
       const tags = [];
@@ -253,7 +265,8 @@
       detail.append(element('summary', '内容を見る'));
       const metadata = element('dl');
       for (const field of definition.fields) {
-        metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
+        metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd',
+          (quantityFields.includes(field) ? formatCount(event[field]) : event[field]) || '—'));
       }
       detail.append(metadata);
       const detailCell = element('td');
