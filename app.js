@@ -73,11 +73,16 @@
       number.toString(36).padStart(7, '0')).join('');
   }
 
-  // 当初分が完了した注文は、承認済みで未完了の追加製造がある場合だけ進捗を送れる。
-  function acceptsProgress(order) {
-    return !order.initialFinished || [...state.requests.values()].some(request =>
+  // 承認済みで未完了の追加製造があるか。
+  function hasPendingAdditional(order) {
+    return [...state.requests.values()].some(request =>
       request.orderId === order.id && request.type === 'additional' &&
       request.answer === '承認' && !request.finished);
+  }
+
+  // 当初分が完了した注文は、承認済みで未完了の追加製造がある場合だけ進捗を送れる。
+  function acceptsProgress(order) {
+    return !order.initialFinished || hasPendingAdditional(order);
   }
 
   function orderChoices(type) {
@@ -451,6 +456,7 @@
       if (order.rush) tags.push(['特急', 'tag tag-rush']);
       if (dueToday) tags.push(['今日納期', 'tag tag-due']);
       if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
+      if (order.initialFinished && hasPendingAdditional(order)) tags.push(['追加分作業あり', 'tag tag-additional']);
       if (importedOrderIds.has(order.id)) tags.push(['今回新規', 'tag tag-imported']);
       if (isProofWaiting(order)) tags.push(['校正待ち', 'tag tag-proof']);
       if (tags.length) {
