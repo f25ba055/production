@@ -205,6 +205,8 @@
         order.paper = request.paper;
         order.quantity = Number(request.quantity);
         state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        // 今の正式な条件を決めた注文変更依頼（P-049）。
+        order.conditionRequestId = request.requestId;
       }
       if (approved && request.type === 'cancel') {
         requireThat(!order.initialFinished, '当初分の製造完了後はキャンセルを承認できません。');
