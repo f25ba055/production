@@ -493,6 +493,39 @@
     return input.value;
   }
 
+  // 注文詳細：工程が何度も更新された注文の経緯を、進捗通知の日時順に追えるようにする（P-028）。
+  // 最新の状態だけでは分からない「いつ・どの工程に変わったか」を、完了見込み日の変化とあわせて並べる。
+  function stageTimeline(order) {
+    const steps = events.filter(event => event.orderId === order.id && event.type === 'progress')
+      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+    const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish');
+    if (!steps.length && !finishes.length) return null;
+    const holder = element('details');
+    holder.className = 'timeline no-print';
+    holder.append(element('summary', '工程の経緯（' + (steps.length + finishes.length) + '件）'));
+    const list = element('ol');
+    let previous = '';
+    for (const step of steps) {
+      const item = element('li');
+      const time = element('time', formatDateTime(step.updatedAt));
+      time.dateTime = step.updatedAt;
+      item.append(time, ' ', element('strong', step.stage),
+        previous && previous !== step.stage ? '（' + previous + 'から）' : '',
+        step.expectedDate ? ' 完了見込み ' + step.expectedDate : '');
+      list.append(item);
+      previous = step.stage;
+    }
+    for (const finish of finishes) {
+      const item = element('li');
+      item.className = 'finish';
+      item.append(element('time', finish.completedDate), ' ', element('strong', '製造完了報告'),
+        ' 良品 ' + copies(finish.goodQuantity) + (Number(finish.shortageQuantity) ? '・不足 ' + copies(finish.shortageQuantity) : ''));
+      list.append(item);
+    }
+    holder.append(list);
+    return holder;
+  }
+
   // 担当者の選択肢（登録済みの担当者と「未割当」）を作り直し、選択中の値を返す（P-025）。
   function updateAssigneeChoices(input, orders) {
     const current = input.value;
@@ -582,6 +615,8 @@
       const assignee = element('div', '担当：' + (order.assignee || '未割当'));
       assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
       cells[0].append(assignee);
+      const timeline = stageTimeline(order);
+      if (timeline) cells[0].append(timeline);
       row.append(...cells);
       list.append(row);
     }
