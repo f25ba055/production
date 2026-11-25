@@ -14,6 +14,7 @@
   --accent-light: #e8eff9;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; }
 header { background: var(--accent-dark); color: white; padding: 1.6rem max(1rem, calc((100% - 1200px)/2)); }
 header p { margin: 0 0 .25rem; font-size: .9rem; }
@@ -51,28 +52,72 @@ td:first-child, td:last-child { min-width: 5rem; }
 .empty { text-align: center; padding: 1rem; color: #486062; }
 .count { margin-left: .6rem; color: #486062; font-size: .9rem; font-weight: normal; }
 summary { cursor: pointer; }
+.stage-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; margin: 0 0 .7rem; }
+.stage-count { display: flex; align-items: baseline; gap: .35rem; padding: .45rem .7rem; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; background: var(--accent-light); }
+.stage-count span:first-child { font-weight: 600; margin-right: auto; }
+.stage-count strong { font-size: 1.4rem; color: var(--accent-dark); font-variant-numeric: tabular-nums; }
 .filter { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.2rem; margin: 0 0 .7rem; padding: .5rem .8rem; border: 1px solid var(--line); border-radius: 4px; }
 .filter legend { padding: 0 .3rem; font-weight: 600; font-size: .9rem; }
 .filter .hint { flex-basis: 100%; margin: 0; }
 label.check { display: inline-flex; align-items: center; gap: .35rem; }
 label.check input { width: auto; }
+.id-search { display: inline-flex; align-items: center; gap: .4rem; }
+.inline-select { display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap; }
+.inline-select select { width: auto; max-width: 16rem; }
+.id-search input { width: 15rem; max-width: 100%; }
 label.check .count { margin-left: 0; }
 input[type="checkbox"]:focus-visible { outline: 3px solid #c16c11; outline-offset: 2px; }
 .tag { display: inline-block; margin: 0 .3rem .2rem 0; padding: 0 .4rem; border-radius: 3px; font-size: .8rem; font-weight: 600; white-space: nowrap; }
 .tag-due { background: #fff0ea; color: #8f2618; border: 1px solid #e3b3a6; }
 .tag-new { background: var(--accent-light); color: var(--accent-dark); border: 1px solid var(--line); }
+.tag-same { background: #fff7d6; color: #6b4b00; border: 1px solid #e0c768; }
+.sub { margin-top: .15rem; color: #486062; font-size: .82rem; font-variant-numeric: tabular-nums; }
+.tag-imported { background: #e6f4ea; color: #1e5631; border: 1px solid #9fcfab; }
+.tag-proof { background: #f3ecfb; color: #5b2d8a; border: 1px solid #c9b0e6; }
 .tag-rush { background: #b3261e; color: white; border: 1px solid #b3261e; }
 tr.due-today td { background: #fff8f4; }
+tr.done td { color: #5f7375; background: #f6f8f7; }
 tr.rush td:first-child { box-shadow: inset 4px 0 0 #b3261e; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
 .unanswered { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
 .unanswered p { margin: 0; font-weight: 600; }
 #csv-types { columns: 2; }
+.request-detail { grid-column: 1 / -1; padding: .6rem .8rem; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; background: var(--accent-light); }
+.request-detail h3 { margin: 0 0 .2rem; font-size: .95rem; }
+.request-detail dl { margin: 0; }
+.request-detail dt { font-weight: 600; }
+.request-detail.empty-detail { border-left-color: var(--line); background: white; color: #486062; font-size: .9rem; }
+.request-detail.empty-detail p { margin: 0; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.print-only { display: none; }
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
 }
 @media (max-width: 460px) {
   #fields { grid-template-columns: 1fr; }
+  .stage-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #csv-types { columns: 1; }
+}
+
+/* 会議用の印刷レイアウト：入力欄・取り込み・絞り込み・履歴などの操作欄を省き、注文一覧だけを出す。 */
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  :root { background: white; }
+  * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  header { padding: 0 0 .3rem; background: none; color: #193033; border-bottom: 2px solid #193033; }
+  header p { display: none; }
+  h1 { font-size: 1.2rem; }
+  main { max-width: none; padding: .4rem 0 0; display: block; }
+  .guide, .workspace, #message, #order-filter, .no-print { display: none !important; }
+  section { padding: 0; border: 0; }
+  .print-only { display: block; margin: 0 0 .4rem; font-size: .8rem; }
+  .stage-counts { gap: .3rem; margin-bottom: .4rem; }
+  .stage-count { padding: .2rem .5rem; }
+  .stage-count strong { font-size: 1rem; }
+  .table-wrap { overflow: visible; }
+  table { font-size: .75rem; }
+  th, td { padding: .3rem .35rem; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
 }
