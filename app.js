@@ -19,7 +19,7 @@
     shortageQuantity: ['不足部数', 'number'],
     deliveryNo: ['分納の回'], deliveryDate: ['納品日', 'date'],
     receivedAt: ['受信日時'],
-    assignee: ['担当者'],
+    assignee: ['担当者'], handoverNote: ['申し送り'],
     paperStatus: ['用紙の状況', ['仮手配', '入庫']], memoDate: ['日付', 'date'], note: ['メモ']
   };
   let events = [];
@@ -97,7 +97,7 @@
         request.orderId === order.id && !request.answer && (type === 'reply' || !request.receivedAt)));
     }
     // 用紙の仮手配は製造承認の前でも記録できるよう、作業一覧に出ている注文を選べる。
-    if (type === 'paperMemo' || type === 'assign') return orders.filter(isListed);
+    if (type === 'paperMemo' || type === 'assign' || type === 'handover') return orders.filter(isListed);
     const available = orders.filter(workflow.availableOrder);
     return type === 'progress' ? available.filter(acceptsProgress) : available;
   }
@@ -335,7 +335,11 @@
     if (field === 'proofId') return select(field, proofChoices(order));
     if (Array.isArray(kind)) return select(field, kind.map(value => [value, value]));
 
-    const input = element(field === 'comment' || field === 'instruction' ? 'textarea' : 'input');
+    const input = element(['comment', 'instruction', 'handoverNote'].includes(field) ? 'textarea' : 'input');
+    if (field === 'handoverNote') {
+      input.maxLength = 500;
+      input.placeholder = '例：用紙の入荷待ち。12/3 午前に入荷予定のため、入荷後に印刷を始めてください。';
+    }
     input.name = field;
     if (input.tagName === 'INPUT') input.type = kind || 'text';
     if (input.type === 'number') {
@@ -377,7 +381,8 @@
     delay: '納期遅延を通知する',
     finish: '製造完了を報告する',
     paperMemo: '用紙メモを残す',
-    assign: '担当者を登録する'
+    assign: '担当者を登録する',
+    handover: '申し送りを残す'
   };
 
   // 注文を切り替えるとフォームを作り直すため、注文ID以外の入力は消える。
@@ -841,8 +846,8 @@
   // 注文詳細：工程が何度も更新された注文の経緯を、進捗通知の日時順に追えるようにする（P-028）。
   // 最新の状態だけでは分からない「いつ・どの工程に変わったか」を、完了見込み日の変化とあわせて並べる。
   function stageTimeline(order) {
-    const steps = events.filter(event => event.orderId === order.id && event.type === 'progress')
-      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+    const steps = events.filter(event => event.orderId === order.id && ['progress', 'handover'].includes(event.type))
+      .sort((a, b) => Date.parse(a.updatedAt || a.recordedAt) - Date.parse(b.updatedAt || b.recordedAt));
     // 訂正された元の報告は除き、訂正版には印を付ける（P-038）。
     const finishes = events.filter(event => event.orderId === order.id && event.type === 'finish' &&
       !(state.finishes.get(event.eventId) || {}).supersededBy);
@@ -854,6 +859,14 @@
     let previous = '';
     for (const step of steps) {
       const item = element('li');
+      if (step.type === 'handover') {
+        // 申し送り（P-044）も経緯に並べる。
+        item.className = 'handover-step';
+        item.append(element('time', step.recordedAt ? formatDateTime(step.recordedAt) : step.createdAt || ''), ' ',
+          element('strong', '申し送り'), ' ', Object.assign(element('span', step.handoverNote), { className: 'multiline' }));
+        list.append(item);
+        continue;
+      }
       const time = element('time', formatDateTime(step.updatedAt));
       time.dateTime = step.updatedAt;
       item.append(time, ' ', element('strong', step.stage),
@@ -984,6 +997,16 @@
       const assignee = element('div', '担当：' + (order.assignee || '未割当'));
       assignee.className = 'sub assignee' + (order.assignee ? '' : ' unassigned');
       cells[0].append(assignee);
+      // 班の交代時の申し送り（P-044）。最新の1件を出し、件数が多いときは工程の経緯で全部見られる。
+      const handover = order.handovers.at(-1);
+      if (handover) {
+        const note = element('div');
+        note.className = 'handover';
+        note.append(element('strong', '申し送り' + (handover.date ? '（' + handover.date + '）' : '') +
+          (order.handovers.length > 1 ? ' 全' + order.handovers.length + '件' : '')),
+          Object.assign(element('div', handover.note), { className: 'multiline' }));
+        cells[0].append(note);
+      }
       const timeline = stageTimeline(order);
       if (timeline) cells[0].append(timeline);
       row.append(...cells);
@@ -1362,6 +1385,7 @@
       lastRegistrant = item.registeredBy;
     }
     if (type === 'receipt') item.receivedAt = new Date().toISOString();
+    if (workflow.interfaces[type].internal) item.recordedAt = new Date().toISOString();
     if (type === 'finish') item.correctsEventId = correctionTarget ? correctionTarget.eventId : '';
     // 登録した日（台帳だけの記録）。校正確認の返答待ち日数などに使う（P-027）。
     item.createdAt = localDate();

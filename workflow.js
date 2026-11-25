@@ -20,7 +20,9 @@
     finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity deliveryNo correctsEventId' },
     // 製造部だけの記録（internal）。台帳には残すが、相手部署とはCSVでやり取りしない。
     paperMemo:   { name: '用紙メモ（製造部内）', from: 'factory', internal: true, fields: 'orderId paperStatus memoDate note' },
-    assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' }
+    assign:      { name: '担当者の割り当て（製造部内）', from: 'factory', internal: true, fields: 'orderId assignee' },
+    // 班の交代時の申し送り（P-044）。営業部には送らない。
+    handover:    { name: '申し送り（製造部内）', from: 'factory', internal: true, fields: 'orderId handoverNote' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
@@ -128,6 +130,9 @@
           '校正PDFのファイル名が不正です（「.pdf」で終わる100文字以内の名前にし、\\ / : * ? " < > | は使えません）。');
       }
     }
+    if (event.type === 'handover') {
+      requireThat(event.handoverNote.length <= 500, '申し送りは500文字以内で入力してください。');
+    }
     if (event.type === 'assign') {
       requireThat(event.assignee.trim().length <= 30, '担当者名は30文字以内で入力してください。');
     }
@@ -162,7 +167,7 @@
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate, rush: event.rush === '特急',
         channel: event.channel || '未設定', receiveMethod: event.receiveMethod || '未設定',
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: ''
+        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: '', proofVersion: 0, proofComment: '', proofSentAt: '', proofDueDate: '', paperMemos: [], assignee: '', handovers: []
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -226,6 +231,12 @@
       deliveries.push({ no, date: event.deliveryDate, quantity: Number(event.quantity), finished: false,
         goodQuantity: 0, shortageQuantity: 0, completedDate: '' });
       deliveries.sort((a, b) => a.no - b.no);
+      return;
+    }
+
+    if (event.type === 'handover') {
+      requireThat(!order.cancelled, 'キャンセル済みの注文には申し送りを残せません。');
+      order.handovers.push({ note: event.handoverNote, date: event.createdAt || '', by: event.registeredBy || '' });
       return;
     }
 
