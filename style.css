@@ -116,6 +116,26 @@ dd { margin: 0; white-space: pre-wrap; }
 .request-detail.empty-detail p { margin: 0; }
 .section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem; }
 .print-only { display: none; }
+/* 現場のタブレット（指・手袋で操作する端末）向け（P-033）。
+   タッチ操作の端末では、ボタン・選択欄・チェックボックスを指で押しやすい大きさ（高さ48px以上）にし、間隔も広げる。 */
+@media (pointer: coarse) {
+  button, select, input[type="file"], input[type="date"], input[type="text"], input[type="search"], input[type="number"] {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+  button { padding: .6rem 1.1rem; white-space: nowrap; }
+  #operation { min-height: 56px; font-size: 1.1rem; font-weight: 600; }
+  #save-event { min-height: 56px; min-width: 14rem; font-size: 1.1rem; }
+  button.widen { min-height: 44px; font-size: .95rem; }
+  label.check { min-height: 48px; padding: 0 .3rem; }
+  label.check input, input[type="checkbox"] { width: 1.6rem; height: 1.6rem; }
+  .filter { gap: .6rem 1.4rem; }
+  #history-filter button, #pending button, #history button { min-width: 6.5rem; }
+  td button + button { margin-left: .4rem; }
+  summary { padding: .55rem 0; }
+  .timeline summary { padding: .4rem 0; }
+}
+
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
 }
