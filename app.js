@@ -245,6 +245,11 @@
     return (order.rush ? 0 : 4) + (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
   }
 
+  // 作業一覧に出す注文。製造依頼を却下した注文（#79）と取消を承認した注文（#92）は外す。
+  function isListed(order) {
+    return !order.cancelled && state.requests.get(order.originalRequestId).answer !== '却下';
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -253,8 +258,7 @@
     const wantDue = filter.elements.dueToday.checked;
     const wantNew = filter.elements.notStarted.checked;
     const wantRush = filter.elements.rush.checked;
-    const all = [...state.orders.values()].filter(order => !order.cancelled &&
-      state.requests.get(order.originalRequestId).answer !== '却下').reverse();
+    const all = [...state.orders.values()].filter(isListed).reverse();
     // 今日納期・未着手は「どちらかに当てはまる」、特急はさらに特急だけに絞る。
     // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
     const shown = all
@@ -305,7 +309,8 @@
     for (const request of rejected) {
       const order = state.orders.get(request.orderId);
       const content = ['paper', 'quantity', 'dueDate', 'reason'].filter(field => request[field])
-        .map(field => fields[field][0] + '：' + request[field]).join('\n');
+        .map(field => fields[field][0] + '：' + (field === 'quantity' ? copies(request[field]) : request[field]))
+        .join('\n');
       const values = [order.id, order.product, workflow.interfaces[request.type].name, request.requestId,
         content, request.answerReason];
       const row = element('tr');
@@ -325,7 +330,7 @@
     const keyword = $('cancel-search').value.trim().toLowerCase();
     const matched = approved.map(request => {
       const order = state.orders.get(request.orderId);
-      return [order.id, order.product, order.paper, order.quantity + '部', request.requestId,
+      return [order.id, order.product, order.paper, copies(order.quantity), request.requestId,
         request.reason, request.answerReason];
     }).filter(values => [values[0], values[1], values[4]].some(value => value.toLowerCase().includes(keyword)));
     for (const values of matched) {
@@ -383,10 +388,10 @@
   }
 
   $('cancel-search').addEventListener('input', renderCancelled);
-  $('order-filter').addEventListener('change', renderOrders);
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
+  $('order-filter').addEventListener('change', renderOrders);
   $('fields').addEventListener('input', event => edited.add(event.target.name));
 
   $('entry').addEventListener('submit', event => {
