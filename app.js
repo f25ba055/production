@@ -250,6 +250,20 @@
     return !order.cancelled && state.requests.get(order.originalRequestId).answer !== '却下';
   }
 
+  // 毎朝の班長報告用。製造中（キャンセル・当初分完了を除く）の注文を最新の進捗の工程で数える。
+  function renderStageCounts() {
+    const holder = $('stage-counts');
+    holder.replaceChildren();
+    const open = [...state.orders.values()].filter(order => isOpen(order) && order.approved);
+    for (const stage of workflow.stages) {
+      const item = element('div');
+      item.className = 'stage-count';
+      const number = element('strong', formatCount(open.filter(order => order.progress === stage).length));
+      item.append(element('span', stage), number, element('span', '件'));
+      holder.append(item);
+    }
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
@@ -380,6 +394,7 @@
 
   function refresh() {
     state = workflow.buildState(events);
+    renderStageCounts();
     renderOrders();
     renderRejected();
     renderHistory();
