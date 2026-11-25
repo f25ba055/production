@@ -61,7 +61,7 @@ summary { cursor: pointer; }
 label.check { display: inline-flex; align-items: center; gap: .35rem; }
 label.check input { width: auto; }
 .id-search { display: inline-flex; align-items: center; gap: .4rem; }
-.inline-select { display: inline-flex; align-items: center; gap: .4rem; }
+.inline-select { display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap; }
 .inline-select select { width: auto; max-width: 16rem; }
 .id-search input { width: 15rem; max-width: 100%; }
 label.check .count { margin-left: 0; }
