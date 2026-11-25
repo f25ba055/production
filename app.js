@@ -171,19 +171,68 @@
     tableBody.append(row);
   }
 
+  // 朝の段取りで先に拾う注文の判定。キャンセル済み・当初分完了の注文は対象外。
+  function isOpen(order) {
+    return !order.cancelled && !order.initialFinished;
+  }
+
+  function isDueToday(order, today) {
+    return isOpen(order) && order.dueDate === today;
+  }
+
+  // 製造承認済みで、進捗通知をまだ出していない注文を「未着手」とする。
+  function isNotStarted(order) {
+    return isOpen(order) && order.approved && !order.progress;
+  }
+
+  function priorityOf(order, today) {
+    return (isDueToday(order, today) ? 0 : 2) + (isNotStarted(order) ? 0 : 1);
+  }
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    for (const order of [...state.orders.values()].reverse()) {
+    const today = localDate();
+    const filter = $('order-filter');
+    const wantDue = filter.elements.dueToday.checked;
+    const wantNew = filter.elements.notStarted.checked;
+    const all = [...state.orders.values()].reverse();
+    // 安定ソートなので、同じ優先度の中では新しい注文が上のまま。
+    const shown = all
+      .filter(order => (!wantDue && !wantNew) ||
+        (wantDue && isDueToday(order, today)) || (wantNew && isNotStarted(order)))
+      .sort((a, b) => priorityOf(a, today) - priorityOf(b, today));
+
+    for (const order of shown) {
       const row = element('tr');
+      const dueToday = isDueToday(order, today);
+      if (dueToday) row.className = 'due-today';
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
-      row.append(...values.map(value => element('td', value)));
+      const cells = values.map(value => element('td', value));
+      const tags = [];
+      if (dueToday) tags.push(['今日納期', 'tag tag-due']);
+      if (isNotStarted(order)) tags.push(['未着手', 'tag tag-new']);
+      if (tags.length) {
+        const holder = element('div');
+        for (const [label, className] of tags) {
+          const tag = element('span', label);
+          tag.className = className;
+          holder.append(tag);
+        }
+        cells[0].prepend(holder);
+      }
+      row.append(...cells);
       list.append(row);
     }
-    if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = state.orders.size + '件';
+    if (!list.children.length) {
+      rowMessage(list, 10, all.length ? '条件に合う注文はありません。' : '注文がありません。');
+    }
+    $('order-count').textContent = shown.length === all.length ?
+      all.length + '件' : shown.length + '件 ／ 全' + all.length + '件';
+    $('due-today-count').textContent = '（' + all.filter(order => isDueToday(order, today)).length + '件）';
+    $('not-started-count').textContent = '（' + all.filter(isNotStarted).length + '件）';
   }
 
   function renderHistory() {
@@ -228,6 +277,7 @@
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
+  $('order-filter').addEventListener('change', renderOrders);
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
